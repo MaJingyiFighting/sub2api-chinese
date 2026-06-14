@@ -3393,6 +3393,26 @@ export default {
         passiveSampled: '被动采样',
         activeQuery: '查询'
       },
+      codingPlan: {
+        title: '编码套餐调度',
+        provider: '供应商',
+        providerAuto: '按 Base URL 自动识别',
+        providerHint: 'Kimi、智谱、MiniMax 支持主动配额查询；火山与 MiMo 默认仅参与错误驱动调度。',
+        providerDetected: '已从 Base URL 识别：{provider}',
+        providerExplicit: '已手动指定：{provider}',
+        probeStatus: '配额查询',
+        probeStatusAuto: '自动',
+        probeSupported: '支持',
+        probeUnsupported: '暂不支持',
+        probeExperimental: '实验性',
+        volcengine: '火山 Agent Plan / Coding Plan',
+        mimo: '小米 MiMo',
+        experimentalProbeUrl: '实验性配额探针 URL',
+        experimentalProbeUrlHint: '只有确认接口真实可用时再填写；留空时显示暂不支持。',
+        experimentalAuthMode: '鉴权方式',
+        authRaw: '原样 Authorization',
+        authNone: '不发送 Authorization'
+      },
       tier: {
         free: 'Free',
         pro: 'Pro',

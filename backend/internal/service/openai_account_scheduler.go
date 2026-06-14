@@ -38,6 +38,7 @@ var openAIAdvancedSchedulerSettingCache atomic.Value // *cachedOpenAIAdvancedSch
 var openAIAdvancedSchedulerSettingSF singleflight.Group
 
 type OpenAIAccountScheduleRequest struct {
+	Provider                CodingPlanProvider
 	GroupID                 *int64
 	SessionHash             string
 	StickyAccountID         int64
@@ -49,6 +50,19 @@ type OpenAIAccountScheduleRequest struct {
 	RequiredImageCapability OpenAIImagesCapability
 	RequireCompact          bool
 	ExcludedIDs             map[int64]struct{}
+}
+
+type SubscriptionAccountScheduleRequest struct {
+	Provider              CodingPlanProvider
+	GroupID               *int64
+	SessionHash           string
+	StickyAccountID       int64
+	PreserveStickyBinding bool
+	PreviousResponseID    string
+	RequestedModel        string
+	RequiredTransport     OpenAIUpstreamTransport
+	RequiredCapability    OpenAIEndpointCapability
+	ExcludedIDs           map[int64]struct{}
 }
 
 type OpenAIAccountScheduleDecision struct {
@@ -461,12 +475,13 @@ func (s *defaultOpenAIAccountScheduler) shouldEscapeStickyAccount(accountID int6
 }
 
 type openAIAccountCandidateScore struct {
-	account   *Account
-	loadInfo  *AccountLoadInfo
-	score     float64
-	errorRate float64
-	ttft      float64
-	hasTTFT   bool
+	account          *Account
+	loadInfo         *AccountLoadInfo
+	score            float64
+	errorRate        float64
+	ttft             float64
+	hasTTFT          bool
+	quotaUtilization float64
 }
 
 type openAIAccountCandidateHeap []openAIAccountCandidateScore
@@ -667,6 +682,7 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 	loadMap map[int64]*AccountLoadInfo,
 ) openAIAccountLoadPlan {
 	allCandidates := make([]openAIAccountCandidateScore, 0, len(filtered))
+	now := time.Now()
 	for _, account := range filtered {
 		loadInfo := loadMap[account.ID]
 		if loadInfo == nil {
@@ -677,11 +693,12 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 			errorRate, ttft, hasTTFT = s.stats.snapshot(account.ID)
 		}
 		allCandidates = append(allCandidates, openAIAccountCandidateScore{
-			account:   account,
-			loadInfo:  loadInfo,
-			errorRate: errorRate,
-			ttft:      ttft,
-			hasTTFT:   hasTTFT,
+			account:          account,
+			loadInfo:         loadInfo,
+			errorRate:        errorRate,
+			ttft:             ttft,
+			hasTTFT:          hasTTFT,
+			quotaUtilization: codingPlanQuotaUtilization(account, now),
 		})
 	}
 
@@ -764,6 +781,7 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 			weights.Queue*queueFactor +
 			weights.ErrorRate*errorFactor +
 			weights.TTFT*ttftFactor
+		item.score -= 0.6 * clamp01(item.quotaUtilization)
 	}
 	plan.candidates = candidates
 
@@ -916,6 +934,9 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		if !account.IsSchedulable() || !account.IsOpenAI() {
 			continue
 		}
+		if !accountMatchesCodingPlanProvider(account, req.Provider) {
+			continue
+		}
 		if s.service.isOpenAIAccountRuntimeBlocked(account) {
 			continue
 		}
@@ -1035,6 +1056,9 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatible(ctx context.C
 	if account == nil {
 		return false
 	}
+	if !accountMatchesCodingPlanProvider(account, req.Provider) {
+		return false
+	}
 	if s != nil && s.service != nil && s.service.isOpenAIAccountRuntimeBlocked(account) {
 		return false
 	}
@@ -1054,6 +1078,13 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatible(ctx context.C
 		return false
 	}
 	return accountSupportsOpenAICapabilities(account, req.RequiredCapability, req.RequiredImageCapability)
+}
+
+func accountMatchesCodingPlanProvider(account *Account, provider CodingPlanProvider) bool {
+	if provider == "" {
+		return true
+	}
+	return ResolveCodingPlanProvider(account) == provider
 }
 
 func (s *defaultOpenAIAccountScheduler) ReportResult(accountID int64, success bool, firstTokenMs *int) {
@@ -1210,6 +1241,58 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForImages(
 		return s.selectAccountWithScheduler(ctx, groupID, "", sessionHash, requestedModel, excludedIDs, OpenAIUpstreamTransportHTTPSSE, "", OpenAIImagesCapabilityBasic, false)
 	}
 	return selection, decision, err
+}
+
+func (s *OpenAIGatewayService) SelectSubscriptionAccountWithScheduler(
+	ctx context.Context,
+	req SubscriptionAccountScheduleRequest,
+) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	decision := OpenAIAccountScheduleDecision{}
+	ctx = s.withOpenAIQuotaAutoPauseContext(ctx)
+	scheduler := s.getOpenAIAccountScheduler(ctx)
+	if scheduler == nil {
+		effectiveExcludedIDs := cloneExcludedAccountIDs(req.ExcludedIDs)
+		for {
+			selection, err := s.selectAccountWithLoadAwareness(
+				ctx,
+				req.GroupID,
+				req.SessionHash,
+				req.RequestedModel,
+				effectiveExcludedIDs,
+				false,
+				req.RequiredCapability,
+			)
+			if err != nil || selection == nil || selection.Account == nil {
+				return selection, decision, err
+			}
+			if accountMatchesCodingPlanProvider(selection.Account, req.Provider) {
+				return selection, decision, nil
+			}
+			if selection.ReleaseFunc != nil {
+				selection.ReleaseFunc()
+			}
+			if effectiveExcludedIDs == nil {
+				effectiveExcludedIDs = make(map[int64]struct{})
+			}
+			if _, exists := effectiveExcludedIDs[selection.Account.ID]; exists {
+				return nil, decision, noAvailableOpenAISelectionError(req.RequestedModel, false)
+			}
+			effectiveExcludedIDs[selection.Account.ID] = struct{}{}
+		}
+	}
+
+	return scheduler.Select(ctx, OpenAIAccountScheduleRequest{
+		Provider:              req.Provider,
+		GroupID:               req.GroupID,
+		SessionHash:           req.SessionHash,
+		StickyAccountID:       req.StickyAccountID,
+		PreserveStickyBinding: req.PreserveStickyBinding,
+		PreviousResponseID:    req.PreviousResponseID,
+		RequestedModel:        req.RequestedModel,
+		RequiredTransport:     req.RequiredTransport,
+		RequiredCapability:    req.RequiredCapability,
+		ExcludedIDs:           req.ExcludedIDs,
+	})
 }
 
 func (s *OpenAIGatewayService) selectAccountWithScheduler(

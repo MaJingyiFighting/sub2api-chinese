@@ -69,6 +69,48 @@
           <p class="input-hint">{{ t('admin.accounts.leaveEmptyToKeep') }}</p>
         </div>
 
+        <div v-if="account.platform === 'openai'" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+          <label class="input-label">{{ t('admin.accounts.codingPlan.title') }}</label>
+          <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div>
+              <label class="input-label">{{ t('admin.accounts.codingPlan.provider') }}</label>
+              <select v-model="codingPlanProvider" class="input">
+                <option value="">{{ t('admin.accounts.codingPlan.providerAuto') }}</option>
+                <option value="kimi">Kimi For Coding</option>
+                <option value="zhipu">Zhipu GLM</option>
+                <option value="minimax">MiniMax</option>
+                <option value="volcengine">{{ t('admin.accounts.codingPlan.volcengine') }}</option>
+                <option value="mimo">{{ t('admin.accounts.codingPlan.mimo') }}</option>
+              </select>
+              <p class="input-hint">{{ detectedCodingPlanProviderLabel }}</p>
+            </div>
+            <div>
+              <label class="input-label">{{ t('admin.accounts.codingPlan.probeStatus') }}</label>
+              <select v-model="codingPlanProbeStatus" class="input">
+                <option value="">{{ t('admin.accounts.codingPlan.probeStatusAuto') }}</option>
+                <option value="supported">{{ t('admin.accounts.codingPlan.probeSupported') }}</option>
+                <option value="unsupported">{{ t('admin.accounts.codingPlan.probeUnsupported') }}</option>
+                <option value="experimental">{{ t('admin.accounts.codingPlan.probeExperimental') }}</option>
+              </select>
+            </div>
+          </div>
+          <div v-if="codingPlanProvider === 'volcengine' || codingPlanProvider === 'mimo'" class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div>
+              <label class="input-label">{{ t('admin.accounts.codingPlan.experimentalProbeUrl') }}</label>
+              <input v-model="codingPlanExperimentalProbeUrl" type="text" class="input" placeholder="https://..." />
+              <p class="input-hint">{{ t('admin.accounts.codingPlan.experimentalProbeUrlHint') }}</p>
+            </div>
+            <div>
+              <label class="input-label">{{ t('admin.accounts.codingPlan.experimentalAuthMode') }}</label>
+              <select v-model="codingPlanExperimentalAuthMode" class="input">
+                <option value="bearer">Bearer</option>
+                <option value="raw">{{ t('admin.accounts.codingPlan.authRaw') }}</option>
+                <option value="none">{{ t('admin.accounts.codingPlan.authNone') }}</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
         <!-- Model Restriction Section (不适用于 Antigravity) -->
         <div v-if="account.platform !== 'antigravity'" class="border-t border-gray-200 pt-4 dark:border-dark-600">
           <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
@@ -2444,6 +2486,41 @@ const baseUrlHint = computed(() => {
   return t('admin.accounts.baseUrlHint')
 })
 
+const codingPlanProviderLabels: Record<string, string> = {
+  kimi: 'Kimi For Coding',
+  zhipu: 'Zhipu GLM',
+  minimax: 'MiniMax',
+  volcengine: 'Volcengine',
+  mimo: 'MiMo'
+}
+
+const detectCodingPlanProviderFromBaseUrl = (baseUrl: string): string => {
+  const value = baseUrl.trim().toLowerCase()
+  if (value.includes('api.kimi.com/coding')) return 'kimi'
+  if (value.includes('open.bigmodel.cn') || value.includes('bigmodel.cn') || value.includes('api.z.ai')) return 'zhipu'
+  if (value.includes('api.minimaxi.com') || value.includes('api.minimax.io')) return 'minimax'
+  if (value.includes('volces.com') || value.includes('volcengine') || value.includes('ark.cn-beijing.volces.com') || value.includes('ark.volces.com')) return 'volcengine'
+  if (value.includes('mimo') || value.includes('mi.com') || value.includes('xiaomi')) return 'mimo'
+  return ''
+}
+
+const detectedCodingPlanProvider = computed(() => detectCodingPlanProviderFromBaseUrl(editBaseUrl.value))
+const detectedCodingPlanProviderLabel = computed(() => {
+  const explicit = codingPlanProvider.value
+  if (explicit) {
+    return t('admin.accounts.codingPlan.providerExplicit', {
+      provider: codingPlanProviderLabels[explicit] || explicit
+    })
+  }
+  const detected = detectedCodingPlanProvider.value
+  if (detected) {
+    return t('admin.accounts.codingPlan.providerDetected', {
+      provider: codingPlanProviderLabels[detected] || detected
+    })
+  }
+  return t('admin.accounts.codingPlan.providerHint')
+})
+
 const antigravityPresetMappings = computed(() => getPresetMappingsByPlatform('antigravity'))
 const bedrockPresets = computed(() => getPresetMappingsByPlatform('bedrock'))
 
@@ -2529,6 +2606,10 @@ const autoPause5hThreshold = ref<number | null>(null)
 const autoPause7dThreshold = ref<number | null>(null)
 const autoPause5hDisabled = ref(false)
 const autoPause7dDisabled = ref(false)
+const codingPlanProvider = ref('')
+const codingPlanProbeStatus = ref('')
+const codingPlanExperimentalProbeUrl = ref('')
+const codingPlanExperimentalAuthMode = ref('bearer')
 const mixedScheduling = ref(false) // For antigravity accounts: enable mixed scheduling
 const allowOverages = ref(false) // For antigravity accounts: enable AI Credits overages
 const antigravityModelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
@@ -2951,6 +3032,18 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 	autoPause7dThreshold.value = typeof extra?.auto_pause_7d_threshold === 'number' ? extra.auto_pause_7d_threshold * 100 : null
 	autoPause5hDisabled.value = extra?.auto_pause_5h_disabled === true
 	autoPause7dDisabled.value = extra?.auto_pause_7d_disabled === true
+	codingPlanProvider.value = typeof extra?.coding_plan_provider === 'string' ? extra.coding_plan_provider : ''
+	codingPlanProbeStatus.value = typeof extra?.coding_plan_probe_status === 'string' ? extra.coding_plan_probe_status : ''
+	codingPlanExperimentalProbeUrl.value = typeof extra?.volcengine_quota_probe_url === 'string'
+	  ? extra.volcengine_quota_probe_url
+	  : typeof extra?.mimo_quota_probe_url === 'string'
+	    ? extra.mimo_quota_probe_url
+	    : ''
+	codingPlanExperimentalAuthMode.value = typeof extra?.volcengine_quota_probe_auth_mode === 'string'
+	  ? extra.volcengine_quota_probe_auth_mode
+	  : typeof extra?.mimo_quota_probe_auth_mode === 'string'
+	    ? extra.mimo_quota_probe_auth_mode
+	    : 'bearer'
 
   // Load OpenAI passthrough toggle (OpenAI OAuth/API Key)
   openaiPassthroughEnabled.value = false
@@ -4124,6 +4217,41 @@ const handleSubmit = async () => {
 		} else {
 			delete newExtra.auto_pause_7d_disabled
 		}
+
+      if (props.account.type === 'apikey') {
+        const provider = codingPlanProvider.value || detectedCodingPlanProvider.value
+        if (provider) {
+          newExtra.coding_plan_provider = provider
+        } else {
+          delete newExtra.coding_plan_provider
+        }
+        if (codingPlanProbeStatus.value) {
+          newExtra.coding_plan_probe_status = codingPlanProbeStatus.value
+        } else {
+          delete newExtra.coding_plan_probe_status
+        }
+
+        delete newExtra.volcengine_quota_probe_url
+        delete newExtra.volcengine_quota_probe_auth_mode
+        delete newExtra.mimo_quota_probe_url
+        delete newExtra.mimo_quota_probe_auth_mode
+        if (provider === 'volcengine' || provider === 'mimo') {
+          const probeUrl = codingPlanExperimentalProbeUrl.value.trim()
+          const authMode = codingPlanExperimentalAuthMode.value || 'bearer'
+          if (probeUrl) {
+            if (provider === 'volcengine') {
+              newExtra.volcengine_quota_probe_url = probeUrl
+              newExtra.volcengine_quota_probe_auth_mode = authMode
+            } else {
+              newExtra.mimo_quota_probe_url = probeUrl
+              newExtra.mimo_quota_probe_auth_mode = authMode
+            }
+            newExtra.coding_plan_probe_status = 'experimental'
+          } else if (provider === 'volcengine' || provider === 'mimo') {
+            newExtra.coding_plan_probe_status = codingPlanProbeStatus.value || 'unsupported'
+          }
+        }
+      }
 
 		delete newExtra.codex_image_generation_bridge_enabled
       if (codexImageGenerationBridgeMode.value === 'inherit') {

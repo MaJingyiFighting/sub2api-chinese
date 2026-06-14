@@ -105,8 +105,8 @@
       <div v-else class="text-xs text-gray-400">-</div>
     </template>
 
-    <!-- OpenAI OAuth accounts: single source from /usage API -->
-    <template v-else-if="account.platform === 'openai' && account.type === 'oauth'">
+    <!-- OpenAI OAuth and Coding Plan API Key accounts: single source from /usage API -->
+    <template v-else-if="account.platform === 'openai' && (account.type === 'oauth' || isCodingPlanAccount)">
       <div v-if="hasOpenAIUsageFallback" class="space-y-1">
         <UsageProgressBar
           v-if="usageInfo?.five_hour"
@@ -149,6 +149,13 @@
             </svg>
             {{ t('admin.accounts.usageWindow.activeQuery') }}
           </button>
+          <span
+            v-if="isCodingPlanAccount"
+            class="text-[9px] text-gray-400 dark:text-gray-500"
+            :title="codingPlanProbeStatusLabel"
+          >
+            {{ codingPlanProviderLabel }}
+          </span>
         </div>
       </div>
       <div v-else-if="loading" class="space-y-1.5">
@@ -162,6 +169,14 @@
           <div class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"></div>
           <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
         </div>
+      </div>
+      <div v-else-if="isCodingPlanAccount" class="space-y-1">
+        <span
+          class="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+          :title="usageInfo?.error || codingPlanProbeStatusLabel"
+        >
+          {{ codingPlanProviderLabel }} · {{ codingPlanProbeStatusLabel }}
+        </span>
       </div>
       <div v-else class="text-xs text-gray-400">-</div>
     </template>
@@ -488,7 +503,7 @@
       />
 
       <!-- No data at all -->
-      <div v-if="!todayStats && !todayStatsLoading && !hasApiKeyQuota" class="text-xs text-gray-400">-</div>
+      <div v-if="!todayStats && !todayStatsLoading && !hasApiKeyQuota && !isCodingPlanAccount" class="text-xs text-gray-400">-</div>
     </div>
   </div>
 </template>
@@ -548,6 +563,7 @@ let visibilityObserver: IntersectionObserver | null = null
 const showUsageWindows = computed(() => {
   // Gemini: we can always compute local usage windows from DB logs (simulated quotas).
   if (props.account.platform === 'gemini') return true
+  if (isCodingPlanAccount.value) return true
   return props.account.type === 'oauth' || props.account.type === 'setup-token'
 })
 
@@ -562,9 +578,43 @@ const shouldFetchUsage = computed(() => {
     return props.account.type === 'oauth'
   }
   if (props.account.platform === 'openai') {
-    return props.account.type === 'oauth'
+    return props.account.type === 'oauth' || isCodingPlanAccount.value
   }
   return false
+})
+
+const detectCodingPlanProviderFromAccount = (account: Account): string => {
+  const extra = account.extra as Record<string, unknown> | undefined
+  const explicit = typeof extra?.coding_plan_provider === 'string' ? extra.coding_plan_provider.trim() : ''
+  if (explicit) return explicit
+  const credentials = account.credentials as Record<string, unknown> | undefined
+  const baseUrl = typeof credentials?.base_url === 'string' ? credentials.base_url.toLowerCase() : ''
+  if (baseUrl.includes('api.kimi.com/coding')) return 'kimi'
+  if (baseUrl.includes('open.bigmodel.cn') || baseUrl.includes('bigmodel.cn') || baseUrl.includes('api.z.ai')) return 'zhipu'
+  if (baseUrl.includes('api.minimaxi.com') || baseUrl.includes('api.minimax.io')) return 'minimax'
+  if (baseUrl.includes('volces.com') || baseUrl.includes('volcengine') || baseUrl.includes('ark.cn-beijing.volces.com') || baseUrl.includes('ark.volces.com')) return 'volcengine'
+  if (baseUrl.includes('mimo') || baseUrl.includes('mi.com') || baseUrl.includes('xiaomi')) return 'mimo'
+  return ''
+}
+
+const codingPlanProviderLabels: Record<string, string> = {
+  kimi: 'Kimi',
+  zhipu: 'GLM',
+  minimax: 'MiniMax',
+  volcengine: 'Volcengine',
+  mimo: 'MiMo'
+}
+
+const codingPlanProvider = computed(() => detectCodingPlanProviderFromAccount(props.account))
+const isCodingPlanAccount = computed(() => props.account.platform === 'openai' && props.account.type === 'apikey' && !!codingPlanProvider.value)
+const codingPlanProviderLabel = computed(() => codingPlanProviderLabels[codingPlanProvider.value] || codingPlanProvider.value)
+const codingPlanProbeStatusLabel = computed(() => {
+  const extra = props.account.extra as Record<string, unknown> | undefined
+  const status = typeof extra?.coding_plan_probe_status === 'string' ? extra.coding_plan_probe_status : ''
+  if (status === 'unsupported') return t('admin.accounts.codingPlan.probeUnsupported')
+  if (status === 'experimental') return t('admin.accounts.codingPlan.probeExperimental')
+  if (status === 'supported') return t('admin.accounts.codingPlan.probeSupported')
+  return t('admin.accounts.codingPlan.probeStatusAuto')
 })
 
 const showGeminiTodayStats = computed(() => {
@@ -583,7 +633,7 @@ const geminiUsageAvailable = computed(() => {
 })
 
 const hasOpenAIUsageFallback = computed(() => {
-  if (props.account.platform !== 'openai' || props.account.type !== 'oauth') return false
+  if (props.account.platform !== 'openai' || (props.account.type !== 'oauth' && !isCodingPlanAccount.value)) return false
   return !!usageInfo.value?.five_hour || !!usageInfo.value?.seven_day
 })
 
@@ -1212,8 +1262,9 @@ onMounted(() => {
 
 watch(openAIUsageRefreshKey, (nextKey, prevKey) => {
   if (!prevKey || nextKey === prevKey) return
-  if (props.account.platform !== 'openai' || props.account.type !== 'oauth') return
+  if (props.account.platform !== 'openai' || (props.account.type !== 'oauth' && !isCodingPlanAccount.value)) return
 
+  _usageCache.delete(props.account.id)
   requestAutoLoad()
 })
 

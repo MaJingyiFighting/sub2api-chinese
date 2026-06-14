@@ -206,7 +206,7 @@ describe('AccountUsageCell', () => {
 
     await flushPromises()
 
-    expect(getUsage).toHaveBeenCalledWith(2000)
+    expect(getUsage).toHaveBeenCalledWith(2000, undefined)
     expect(wrapper.text()).toContain('5h|15|300')
     expect(wrapper.text()).toContain('7d|77|300')
   })
@@ -267,7 +267,7 @@ describe('AccountUsageCell', () => {
 
     await flushPromises()
 
-    expect(getUsage).toHaveBeenCalledWith(2001)
+    expect(getUsage).toHaveBeenCalledWith(2001, undefined)
     // 单一数据源：始终使用 /usage API 返回值，忽略 codex 快照
     expect(wrapper.text()).toContain('5h|18|900')
     expect(wrapper.text()).toContain('7d|36|900')
@@ -338,7 +338,7 @@ describe('AccountUsageCell', () => {
 
     // 手动刷新再拉一次
     expect(getUsage).toHaveBeenCalledTimes(2)
-    expect(getUsage).toHaveBeenCalledWith(2010)
+    expect(getUsage).toHaveBeenCalledWith(2010, undefined)
     // 单一数据源：始终使用 /usage API 值
     expect(wrapper.text()).toContain('5h|18|900')
   })
@@ -393,7 +393,7 @@ describe('AccountUsageCell', () => {
 
 	await flushPromises()
 
-	expect(getUsage).toHaveBeenCalledWith(2002)
+	expect(getUsage).toHaveBeenCalledWith(2002, undefined)
 	expect(wrapper.text()).toContain('5h|0|27700')
 	expect(wrapper.text()).toContain('7d|0|27700')
   })
@@ -525,7 +525,7 @@ describe('AccountUsageCell', () => {
 
 	await flushPromises()
 
-  expect(getUsage).toHaveBeenCalledWith(2004)
+  expect(getUsage).toHaveBeenCalledWith(2004, undefined)
   expect(wrapper.text()).toContain('5h|100|106540000')
   expect(wrapper.text()).toContain('7d|100|106540000')
   })
@@ -615,6 +615,89 @@ describe('AccountUsageCell', () => {
 		await flushPromises()
 
 		expect(wrapper.text().trim()).toBe('-')
+  })
+
+  it('国产 Coding Plan 的 OpenAI API Key 会拉取用量窗口', async () => {
+    getUsage.mockResolvedValue({
+      source: 'active_probe',
+      five_hour: {
+        utilization: 75,
+        resets_at: '2026-06-14T15:00:00Z',
+        remaining_seconds: 18000
+      },
+      seven_day: {
+        utilization: 60,
+        resets_at: '2026-06-21T10:00:00Z',
+        remaining_seconds: 604800
+      }
+    })
+
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: 5001,
+          platform: 'openai',
+          type: 'apikey',
+          credentials: {
+            base_url: 'https://api.kimi.com/coding/v1'
+          },
+          extra: {}
+        })
+      },
+      global: {
+        stubs: {
+          UsageProgressBar: {
+            props: ['label', 'utilization', 'resetsAt', 'windowStats', 'color'],
+            template: '<div class="usage-bar">{{ label }}|{{ utilization }}|{{ resetsAt }}</div>'
+          },
+          AccountQuotaInfo: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(getUsage).toHaveBeenCalledWith(5001, undefined)
+    expect(wrapper.text()).toContain('5h|75|2026-06-14T15:00:00Z')
+    expect(wrapper.text()).toContain('7d|60|2026-06-21T10:00:00Z')
+    expect(wrapper.text()).toContain('Kimi')
+  })
+
+  it('火山 Coding Plan 显示暂不支持配额查询状态但仍进入用量窗口', async () => {
+    getUsage.mockResolvedValue({
+      source: 'active_probe',
+      error: 'quota probe is not implemented because no verified public endpoint is available',
+      five_hour: null,
+      seven_day: null
+    })
+
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: 5002,
+          platform: 'openai',
+          type: 'apikey',
+          credentials: {
+            base_url: 'https://ark.cn-beijing.volces.com/api/v3'
+          },
+          extra: {
+            coding_plan_provider: 'volcengine',
+            coding_plan_probe_status: 'unsupported'
+          }
+        })
+      },
+      global: {
+        stubs: {
+          UsageProgressBar: true,
+          AccountQuotaInfo: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(getUsage).toHaveBeenCalledWith(5002, undefined)
+    expect(wrapper.text()).toContain('Volcengine')
   })
 
   it('Vertex 账号会在 Gemini 用量窗口里展示 today stats 徽章', async () => {

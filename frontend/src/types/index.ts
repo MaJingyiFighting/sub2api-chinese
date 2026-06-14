@@ -945,7 +945,7 @@ export interface AntigravityModelQuota {
 }
 
 export interface AccountUsageInfo {
-  source?: 'passive' | 'active'
+  source?: 'passive' | 'active' | 'active_probe' | 'response_header' | 'error' | 'local_snapshot' | 'local_estimate'
   updated_at: string | null
   five_hour: UsageProgress | null
   seven_day: UsageProgress | null
