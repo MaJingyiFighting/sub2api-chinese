@@ -178,6 +178,84 @@ func TestParseMiniMaxCodingPlanQuota(t *testing.T) {
 	})
 }
 
+func TestVolcengineCodingPlanQuotaProbe(t *testing.T) {
+	now := time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC)
+
+	t.Run("parse remaining percent windows", func(t *testing.T) {
+		snapshot, err := ParseVolcengineCodingPlanQuota([]byte(`{
+			"ResponseMetadata":{"RequestId":"req"},
+			"Result":{
+				"PlanName":"Coding Pro",
+				"SeatInfoUsages":[{
+					"SeatID":"seat-1",
+					"CurrentIntervalRemainingPercent":25,
+					"CurrentIntervalEndTime":1781438400,
+					"CurrentWeeklyRemainingPercent":40,
+					"WeeklyEndTime":1782043200000
+				}]
+			}
+		}`), now, "ListSeatInfoUsages")
+		require.NoError(t, err)
+		require.True(t, snapshot.Success)
+		require.NotNil(t, snapshot.FiveHourUsedPercent)
+		require.Equal(t, 75.0, *snapshot.FiveHourUsedPercent)
+		require.NotNil(t, snapshot.WeeklyUsedPercent)
+		require.Equal(t, 60.0, *snapshot.WeeklyUsedPercent)
+		require.Equal(t, "Coding Pro", *snapshot.PlanName)
+		require.Equal(t, "ListSeatInfoUsages", snapshot.Raw["volcengine_action"])
+	})
+
+	t.Run("signed request uses openapi action", func(t *testing.T) {
+		var gotMethod, gotAction, gotVersion, gotAuth, gotDate, gotHash, gotBody string
+		client := &http.Client{Transport: codingPlanRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			body, _ := io.ReadAll(req.Body)
+			gotMethod = req.Method
+			gotAction = req.URL.Query().Get("Action")
+			gotVersion = req.URL.Query().Get("Version")
+			gotAuth = req.Header.Get("Authorization")
+			gotDate = req.Header.Get("X-Date")
+			gotHash = req.Header.Get("X-Content-Sha256")
+			gotBody = string(body)
+			return &http.Response{
+				StatusCode: 200,
+				Body: io.NopCloser(strings.NewReader(`{
+					"Result":{"SeatInfoUsage":{"CurrentIntervalRemainingPercent":10,"CurrentWeeklyRemainingPercent":20}}
+				}`)),
+				Header: make(http.Header),
+			}, nil
+		})}
+		probe := NewVolcengineCodingPlanProbe(client)
+		account := &Account{
+			Platform: string(CodingPlanProviderVolcengine),
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"api_key":                      "ark-test",
+				"base_url":                     "https://ark.cn-beijing.volces.com/api/v3",
+				"volcengine_access_key_id":     "AKLTtest",
+				"volcengine_secret_access_key": "secret",
+			},
+			Extra: map[string]any{
+				"coding_plan_provider":    "volcengine",
+				"volcengine_plan_type":    "coding_plan",
+				"volcengine_region":       "cn-beijing",
+				"volcengine_seat_id":      "seat-1",
+				"volcengine_account_id":   "account-1",
+				"volcengine_project_name": "project-a",
+			},
+		}
+		snapshot, err := probe.Probe(t.Context(), account)
+		require.NoError(t, err)
+		require.True(t, snapshot.Success)
+		require.Equal(t, http.MethodPost, gotMethod)
+		require.Equal(t, "GetSeatInfoUsage", gotAction)
+		require.Equal(t, "2024-01-01", gotVersion)
+		require.Contains(t, gotAuth, "HMAC-SHA256 Credential=AKLTtest/")
+		require.NotEmpty(t, gotDate)
+		require.NotEmpty(t, gotHash)
+		require.Contains(t, gotBody, `"SeatID":"seat-1"`)
+	})
+}
+
 func TestCodingPlanQuotaSchedulingHelpers(t *testing.T) {
 	now := time.Now()
 	resetAt := now.Add(time.Hour).Format(time.RFC3339)
@@ -230,6 +308,7 @@ func TestCodingPlanProviderDetectionAndUnsupportedProbe(t *testing.T) {
 	require.NotNil(t, snapshot)
 	require.Equal(t, CodingPlanProbeStatusExperimental, snapshot.QuotaProbeStatus)
 	require.False(t, snapshot.Success)
+	require.Contains(t, snapshot.ErrorMessage, "Access Key / Secret Key")
 
 	account.Extra["coding_plan_provider"] = "mimo"
 	snapshot, err = ProbeCodingPlanQuota(t.Context(), account)

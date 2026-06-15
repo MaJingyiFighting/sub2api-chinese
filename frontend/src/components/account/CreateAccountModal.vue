@@ -999,6 +999,8 @@
                     ? (apiFormat === 'anthropic_messages' ? 'https://api.moonshot.cn/anthropic' : 'https://api.moonshot.cn/v1')
                     : form.platform === 'zhipu'
                       ? (apiFormat === 'anthropic_messages' ? 'https://open.bigmodel.cn/api/anthropic' : 'https://open.bigmodel.cn/api/coding/paas/v4')
+                      : form.platform === 'volcengine'
+                        ? 'https://ark.cn-beijing.volces.com/api/v3'
                       : isDomesticCodingPlanPlatform(form.platform)
                         ? 'experimental: please enter upstream url manually'
                         : 'https://api.anthropic.com'
@@ -1034,6 +1036,52 @@
             :placeholder="t('admin.accounts.codingPlan.quotaBaseUrlPlaceholder')"
           />
           <p class="input-hint">{{ t('admin.accounts.codingPlan.quotaBaseUrlHint') }}</p>
+        </div>
+
+        <div v-if="form.platform === 'volcengine'" class="rounded-lg border border-gray-200 p-3 dark:border-dark-600">
+          <label class="input-label">{{ t('admin.accounts.codingPlan.volcengineOpenAPI') }}</label>
+          <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div>
+              <label class="input-label">{{ t('admin.accounts.codingPlan.volcenginePlanType') }}</label>
+              <select v-model="volcenginePlanType" class="input">
+                <option value="coding_plan">{{ t('admin.accounts.codingPlan.volcengineCodingPlan') }}</option>
+                <option value="agent_plan">{{ t('admin.accounts.codingPlan.volcengineAgentPlan') }}</option>
+              </select>
+            </div>
+            <div>
+              <label class="input-label">{{ t('admin.accounts.codingPlan.volcengineRegion') }}</label>
+              <input v-model="volcengineRegion" type="text" class="input font-mono" placeholder="cn-beijing" />
+            </div>
+            <div>
+              <label class="input-label">{{ t('admin.accounts.codingPlan.volcengineAccessKeyId') }}</label>
+              <input v-model="volcengineAccessKeyId" type="text" class="input font-mono" placeholder="AKLT..." />
+            </div>
+            <div>
+              <label class="input-label">{{ t('admin.accounts.codingPlan.volcengineSecretAccessKey') }}</label>
+              <input
+                v-model="volcengineSecretAccessKey"
+                type="password"
+                class="input font-mono"
+                autocomplete="new-password"
+                data-1p-ignore
+                data-lpignore="true"
+                data-bwignore="true"
+              />
+            </div>
+            <div>
+              <label class="input-label">{{ t('admin.accounts.codingPlan.volcengineSeatId') }}</label>
+              <input v-model="volcengineSeatId" type="text" class="input font-mono" />
+            </div>
+            <div>
+              <label class="input-label">{{ t('admin.accounts.codingPlan.volcengineAccountId') }}</label>
+              <input v-model="volcengineAccountId" type="text" class="input font-mono" />
+            </div>
+            <div class="md:col-span-2">
+              <label class="input-label">{{ t('admin.accounts.codingPlan.volcengineProjectName') }}</label>
+              <input v-model="volcengineProjectName" type="text" class="input" />
+            </div>
+          </div>
+          <p class="input-hint mt-2">{{ t('admin.accounts.codingPlan.volcengineOpenAPIHint') }}</p>
         </div>
 
         <!-- Gemini API Key tier selection -->
@@ -3356,6 +3404,13 @@ const apiKeyBaseUrl = ref('https://api.anthropic.com')
 const apiKeyValue = ref('')
 const apiFormat = ref<'chat_completions' | 'anthropic_messages'>('chat_completions')
 const quotaBaseUrl = ref('')
+const volcenginePlanType = ref<'coding_plan' | 'agent_plan'>('coding_plan')
+const volcengineRegion = ref('cn-beijing')
+const volcengineAccessKeyId = ref('')
+const volcengineSecretAccessKey = ref('')
+const volcengineSeatId = ref('')
+const volcengineAccountId = ref('')
+const volcengineProjectName = ref('')
 
 const syncPreviewCredentials = computed(() => {
   if (!apiKeyValue.value) return undefined
@@ -3832,6 +3887,8 @@ watch(
         apiKeyBaseUrl.value = format === 'anthropic_messages' ? 'https://open.bigmodel.cn/api/anthropic' : 'https://open.bigmodel.cn/api/coding/paas/v4'
       } else if (newPlatform === 'minimax') {
         apiKeyBaseUrl.value = ''
+      } else if (newPlatform === 'volcengine') {
+        apiKeyBaseUrl.value = 'https://ark.cn-beijing.volces.com/api/v3'
       } else {
         apiKeyBaseUrl.value = ''
       }
@@ -4259,6 +4316,13 @@ const resetForm = () => {
   apiKeyValue.value = ''
   apiFormat.value = 'chat_completions'
   quotaBaseUrl.value = ''
+  volcenginePlanType.value = 'coding_plan'
+  volcengineRegion.value = 'cn-beijing'
+  volcengineAccessKeyId.value = ''
+  volcengineSecretAccessKey.value = ''
+  volcengineSeatId.value = ''
+  volcengineAccountId.value = ''
+  volcengineProjectName.value = ''
   editQuotaLimit.value = null
   editQuotaDailyLimit.value = null
   editQuotaWeeklyLimit.value = null
@@ -4657,8 +4721,8 @@ const handleSubmit = async () => {
     return
   }
 
-  // Handle Volcengine/MiMo/MiniMax base_url validation
-  if ((form.platform === 'volcengine' || form.platform === 'mimo' || form.platform === 'minimax') && !apiKeyBaseUrl.value.trim()) {
+  // Handle MiMo/MiniMax base_url validation
+  if ((form.platform === 'mimo' || form.platform === 'minimax') && !apiKeyBaseUrl.value.trim()) {
     appStore.showError(t('admin.accounts.codingPlan.baseUrlRequired'))
     return
   }
@@ -4676,7 +4740,7 @@ const handleSubmit = async () => {
   } else if (form.platform === 'minimax') {
     defaultBaseUrl = '' // No fixed default, user must provide
   } else if (form.platform === 'volcengine') {
-    defaultBaseUrl = '' // No fixed default, user must provide
+    defaultBaseUrl = 'https://ark.cn-beijing.volces.com/api/v3'
   } else if (form.platform === 'mimo') {
     defaultBaseUrl = '' // No fixed default, user must provide
   }
@@ -4691,6 +4755,14 @@ const handleSubmit = async () => {
     credentials.wire_api = apiFormat.value === 'chat_completions' ? 'openai_chat' : 'anthropic_messages'
     if (apiFormat.value === 'chat_completions') {
       credentials.chat_completions_route_enabled = true
+    }
+  }
+  if (form.platform === 'volcengine') {
+    if (volcengineAccessKeyId.value.trim()) {
+      credentials.volcengine_access_key_id = volcengineAccessKeyId.value.trim()
+    }
+    if (volcengineSecretAccessKey.value.trim()) {
+      credentials.volcengine_secret_access_key = volcengineSecretAccessKey.value.trim()
     }
   }
   if (form.platform === 'gemini') {
@@ -4743,6 +4815,21 @@ const handleSubmit = async () => {
       extra.quota_base_url = quotaBaseUrl.value.trim()
     }
     extra.responses_support = apiFormat.value === 'chat_completions' ? 'via_chat_completions' : 'via_anthropic_messages'
+    if (form.platform === 'volcengine') {
+      extra.coding_plan_probe_status = (volcengineAccessKeyId.value.trim() && volcengineSecretAccessKey.value.trim()) ? 'supported' : 'experimental'
+      extra.volcengine_plan_type = volcenginePlanType.value
+      extra.volcengine_region = volcengineRegion.value.trim() || 'cn-beijing'
+      extra.volcengine_service = 'ark'
+      if (volcengineSeatId.value.trim()) {
+        extra.volcengine_seat_id = volcengineSeatId.value.trim()
+      }
+      if (volcengineAccountId.value.trim()) {
+        extra.volcengine_account_id = volcengineAccountId.value.trim()
+      }
+      if (volcengineProjectName.value.trim()) {
+        extra.volcengine_project_name = volcengineProjectName.value.trim()
+      }
+    }
   }
 
   await doCreateAccount({

@@ -289,7 +289,7 @@ func (p *codingPlanHTTPProbe) Probe(ctx context.Context, account *Account) (*Cod
 	case CodingPlanProviderMiniMax:
 		return p.probeMiniMax(ctx, account)
 	case CodingPlanProviderVolcengine:
-		return p.probeUnsupportedOrExperimental(ctx, account, "volcengine_quota_probe_url", "volcengine_quota_probe_auth_mode")
+		return p.probeVolcengine(ctx, account)
 	case CodingPlanProviderMiMo:
 		return p.probeUnsupportedOrExperimental(ctx, account, "mimo_quota_probe_url", "mimo_quota_probe_auth_mode")
 	default:
@@ -375,6 +375,52 @@ func (p *codingPlanHTTPProbe) probeMiniMax(ctx context.Context, account *Account
 	snapshot, err := ParseMiniMaxCodingPlanQuota(body, time.Now())
 	if err != nil {
 		return codingPlanParseErrorSnapshot(CodingPlanProviderMiniMax, body, err), err
+	}
+	return snapshot, nil
+}
+
+func (p *codingPlanHTTPProbe) probeVolcengine(ctx context.Context, account *Account) (*CodingPlanQuotaSnapshot, error) {
+	ak := strings.TrimSpace(account.GetCredential("volcengine_access_key_id"))
+	sk := strings.TrimSpace(account.GetCredential("volcengine_secret_access_key"))
+	if ak == "" || sk == "" {
+		snapshot := unsupportedCodingPlanQuotaSnapshot(CodingPlanProviderVolcengine, "volcengine quota probe requires Access Key / Secret Key")
+		snapshot.QuotaProbeStatus = CodingPlanProbeStatusExperimental
+		return snapshot, ErrCodingPlanQuotaProbeUnsupported
+	}
+
+	region := firstNonEmptyCodingPlan(account.GetExtraString("volcengine_region"), "cn-beijing")
+	serviceName := firstNonEmptyCodingPlan(account.GetExtraString("volcengine_service"), "ark")
+	action := volcengineQuotaAction(account)
+	payload := volcengineQuotaPayload(account, action)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	endpoint, err := volcengineOpenAPIEndpoint(account, region, action)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if err := signVolcengineOpenAPI(req, body, ak, sk, region, serviceName, time.Now()); err != nil {
+		snapshot := unsupportedCodingPlanQuotaSnapshot(CodingPlanProviderVolcengine, err.Error())
+		snapshot.QuotaProbeStatus = CodingPlanProbeStatusExperimental
+		return snapshot, err
+	}
+
+	respBody, status, err := p.doProbe(req)
+	if err != nil {
+		return codingPlanNetworkErrorSnapshot(CodingPlanProviderVolcengine, err), err
+	}
+	if status < 200 || status >= 300 {
+		return parseCodingPlanHTTPError(CodingPlanProviderVolcengine, status, respBody), nil
+	}
+	snapshot, err := ParseVolcengineCodingPlanQuota(respBody, time.Now(), action)
+	if err != nil {
+		return codingPlanParseErrorSnapshot(CodingPlanProviderVolcengine, respBody, err), err
 	}
 	return snapshot, nil
 }
@@ -468,6 +514,67 @@ func miniMaxCodingPlanQuotaEndpoint(baseURL string) string {
 		return "https://api.minimax.io/v1/api/openplatform/coding_plan/remains"
 	}
 	return "https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains"
+}
+
+func volcengineQuotaAction(account *Account) string {
+	planType := strings.ToLower(strings.TrimSpace(account.GetExtraString("volcengine_plan_type")))
+	switch planType {
+	case "agent_plan", "agent", "afp":
+		return "GetAFPUsage"
+	case "coding_plan", "coding", "seat":
+		if strings.TrimSpace(account.GetExtraString("volcengine_seat_id")) != "" {
+			return "GetSeatInfoUsage"
+		}
+		return "ListSeatInfoUsages"
+	default:
+		if strings.TrimSpace(account.GetExtraString("volcengine_seat_id")) != "" {
+			return "GetSeatInfoUsage"
+		}
+		return "ListSeatInfoUsages"
+	}
+}
+
+func volcengineQuotaPayload(account *Account, action string) map[string]any {
+	payload := map[string]any{}
+	setString := func(key, value string) {
+		if strings.TrimSpace(value) != "" {
+			payload[key] = strings.TrimSpace(value)
+		}
+	}
+	seatID := account.GetExtraString("volcengine_seat_id")
+	accountID := account.GetExtraString("volcengine_account_id")
+	projectName := account.GetExtraString("volcengine_project_name")
+	switch action {
+	case "GetAFPUsage":
+		setString("SeatID", seatID)
+		setString("AccountID", accountID)
+		setString("ProjectName", projectName)
+	case "GetSeatInfoUsage":
+		setString("SeatID", seatID)
+		setString("AccountID", accountID)
+		setString("ProjectName", projectName)
+	case "ListSeatInfoUsages", "ListSeatInfos":
+		setString("AccountID", accountID)
+		setString("ProjectName", projectName)
+	}
+	return payload
+}
+
+func volcengineOpenAPIEndpoint(account *Account, region, action string) (string, error) {
+	baseURL := strings.TrimSpace(account.GetExtraString("quota_base_url"))
+	if baseURL == "" {
+		baseURL = fmt.Sprintf("https://ark.%s.volces.com", firstNonEmptyCodingPlan(region, "cn-beijing"))
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed == nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", fmt.Errorf("invalid volcengine quota base url")
+	}
+	parsed.Path = "/"
+	query := parsed.Query()
+	query.Set("Action", action)
+	query.Set("Version", "2024-01-01")
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
 }
 
 func ParseKimiCodingPlanQuota(body []byte, now time.Time) (*CodingPlanQuotaSnapshot, error) {
@@ -631,6 +738,268 @@ func ParseMiniMaxCodingPlanQuota(body []byte, now time.Time) (*CodingPlanQuotaSn
 		break
 	}
 	return snapshot, nil
+}
+
+func ParseVolcengineCodingPlanQuota(body []byte, now time.Time, action string) (*CodingPlanQuotaSnapshot, error) {
+	var root map[string]any
+	if err := json.Unmarshal(body, &root); err != nil {
+		return nil, err
+	}
+	snapshot := newCodingPlanQuotaSnapshot(CodingPlanProviderVolcengine, now, "active_probe")
+	snapshot.Raw = root
+
+	if meta, _ := root["ResponseMetadata"].(map[string]any); meta != nil {
+		if errObj, _ := meta["Error"].(map[string]any); errObj != nil {
+			msg := strings.TrimSpace(fmt.Sprint(errObj["Message"]))
+			if msg == "" {
+				msg = strings.TrimSpace(fmt.Sprint(errObj["Code"]))
+			}
+			if msg == "" {
+				msg = "volcengine quota API returned an error"
+			}
+			snapshot.Success = false
+			snapshot.ErrorMessage = msg
+			return snapshot, errors.New(msg)
+		}
+	}
+	if action != "" {
+		snapshot.Raw["volcengine_action"] = action
+	}
+	walkVolcengineQuota(root, "", snapshot, now)
+	return snapshot, nil
+}
+
+func walkVolcengineQuota(value any, path string, snapshot *CodingPlanQuotaSnapshot, now time.Time) {
+	switch typed := value.(type) {
+	case map[string]any:
+		applyVolcengineQuotaMap(typed, path, snapshot, now)
+		for key, child := range typed {
+			nextPath := key
+			if path != "" {
+				nextPath = path + "." + key
+			}
+			walkVolcengineQuota(child, nextPath, snapshot, now)
+		}
+	case []any:
+		for _, child := range typed {
+			walkVolcengineQuota(child, path, snapshot, now)
+		}
+	}
+}
+
+func applyVolcengineQuotaMap(entry map[string]any, path string, snapshot *CodingPlanQuotaSnapshot, now time.Time) {
+	if snapshot == nil || len(entry) == 0 {
+		return
+	}
+	if snapshot.PlanName == nil {
+		if plan := firstStringField(entry, "PlanName", "PlanType", "PackageName", "ProductName", "Name"); plan != "" {
+			snapshot.PlanName = &plan
+		}
+	}
+	if snapshot.AccountStatus == nil {
+		if status := firstStringField(entry, "AccountStatus", "Status", "SeatStatus"); status != "" {
+			snapshot.AccountStatus = &status
+		}
+	}
+	text := volcengineQuotaText(path, entry)
+	applied := false
+	if volcengineTextHasFiveHour(text) {
+		applied = applyVolcengineWindow(entry, snapshot, now, "5h", []string{"currentinterval", "interval", "five", "5h", "5_hour", "5hour"}) || applied
+	}
+	if volcengineTextHasWeekly(text) {
+		applied = applyVolcengineWindow(entry, snapshot, now, "weekly", []string{"currentweekly", "weekly", "week", "7d"}) || applied
+	}
+	if applied {
+		return
+	}
+	switch volcengineQuotaWindow(path, entry) {
+	case "5h":
+		applyVolcengineWindow(entry, snapshot, now, "5h", nil)
+	case "weekly":
+		applyVolcengineWindow(entry, snapshot, now, "weekly", nil)
+	}
+}
+
+func applyVolcengineWindow(entry map[string]any, snapshot *CodingPlanQuotaSnapshot, now time.Time, window string, scopeHints []string) bool {
+	if window == "5h" && snapshot.FiveHourUsedPercent != nil {
+		return false
+	}
+	if window == "weekly" && snapshot.WeeklyUsedPercent != nil {
+		return false
+	}
+	usedPercent, ok := volcengineUsedPercentScoped(entry, scopeHints)
+	if !ok {
+		return false
+	}
+	resetAt := volcengineResetAtScoped(entry, now, scopeHints)
+	switch window {
+	case "5h":
+		snapshot.FiveHourUsedPercent = &usedPercent
+		if resetAt != nil {
+			snapshot.FiveHourResetAt = resetAt
+			seconds := int64(math.Max(0, resetAt.Sub(now).Seconds()))
+			snapshot.FiveHourResetAfterSeconds = &seconds
+		}
+	case "weekly":
+		snapshot.WeeklyUsedPercent = &usedPercent
+		if resetAt != nil {
+			snapshot.WeeklyResetAt = resetAt
+			seconds := int64(math.Max(0, resetAt.Sub(now).Seconds()))
+			snapshot.WeeklyResetAfterSeconds = &seconds
+		}
+	default:
+		return false
+	}
+	return true
+}
+
+func volcengineQuotaWindow(path string, entry map[string]any) string {
+	text := volcengineQuotaText(path, entry)
+	switch {
+	case volcengineTextHasWeekly(text):
+		return "weekly"
+	case volcengineTextHasFiveHour(text):
+		return "5h"
+	default:
+		return ""
+	}
+}
+
+func volcengineQuotaText(path string, entry map[string]any) string {
+	text := strings.ToLower(path)
+	for key, value := range entry {
+		text += " " + strings.ToLower(key) + " " + strings.ToLower(fmt.Sprint(value))
+	}
+	return text
+}
+
+func volcengineTextHasFiveHour(text string) bool {
+	return strings.Contains(text, "five") || strings.Contains(text, "5h") || strings.Contains(text, "5_hour") || strings.Contains(text, "5-hour") || strings.Contains(text, "currentinterval") || strings.Contains(text, "current_interval")
+}
+
+func volcengineTextHasWeekly(text string) bool {
+	return strings.Contains(text, "week") || strings.Contains(text, "weekly") || strings.Contains(text, "7d")
+}
+
+func volcengineUsedPercent(entry map[string]any) (float64, bool) {
+	if value, ok := firstNumberByKeyHintExcluding(entry, []string{"remaining", "remain", "available"}, "used_percent", "usage_percent", "usedpercent", "usagepercent", "usedpercentage", "usagepercentage", "percentage"); ok {
+		return clampPercent(value), true
+	}
+	if value, ok := firstNumberByKeyHint(entry, "remaining_percent", "remainingpercent", "remainingpercentage"); ok {
+		return clampPercent(100 - value), true
+	}
+	limit, hasLimit := firstNumberByKeyHint(entry, "limit", "total", "quota")
+	remaining, hasRemaining := firstNumberByKeyHint(entry, "remaining", "remain", "available")
+	if hasLimit && hasRemaining && limit > 0 {
+		return usedPercentFromLimitRemaining(limit, remaining), true
+	}
+	used, hasUsed := firstNumberByKeyHint(entry, "used", "usage", "consumed")
+	if hasLimit && hasUsed && limit > 0 {
+		return clampPercent(used / limit * 100), true
+	}
+	return 0, false
+}
+
+func volcengineUsedPercentScoped(entry map[string]any, scopeHints []string) (float64, bool) {
+	if len(scopeHints) == 0 {
+		return volcengineUsedPercent(entry)
+	}
+	for key, value := range entry {
+		normalized := normalizeQuotaKey(key)
+		if !containsAnyHint(normalized, scopeHints) {
+			continue
+		}
+		switch {
+		case strings.Contains(normalized, "remainingpercent"), strings.Contains(normalized, "remaining_percent"), strings.Contains(normalized, "remainingpercentage"):
+			return clampPercent(100 - parseExtraFloat64(value)), true
+		case strings.Contains(normalized, "usedpercent"), strings.Contains(normalized, "used_percent"), strings.Contains(normalized, "usagepercent"), strings.Contains(normalized, "usage_percent"), strings.Contains(normalized, "percentage"):
+			return clampPercent(parseExtraFloat64(value)), true
+		}
+	}
+	return volcengineUsedPercent(entry)
+}
+
+func volcengineResetAt(entry map[string]any, now time.Time) *time.Time {
+	for key, value := range entry {
+		normalized := strings.ToLower(key)
+		if strings.Contains(normalized, "reset") || strings.Contains(normalized, "end_time") || strings.Contains(normalized, "expire") || strings.Contains(normalized, "expires") {
+			if resetAt := parseCodingPlanResetTime(value, now); resetAt != nil {
+				return resetAt
+			}
+		}
+	}
+	return nil
+}
+
+func volcengineResetAtScoped(entry map[string]any, now time.Time, scopeHints []string) *time.Time {
+	if len(scopeHints) == 0 {
+		return volcengineResetAt(entry, now)
+	}
+	for key, value := range entry {
+		normalized := normalizeQuotaKey(key)
+		if !containsAnyHint(normalized, scopeHints) {
+			continue
+		}
+		if strings.Contains(normalized, "reset") || strings.Contains(normalized, "endtime") || strings.Contains(normalized, "end_time") || strings.Contains(normalized, "expire") || strings.Contains(normalized, "expires") {
+			if resetAt := parseCodingPlanResetTime(value, now); resetAt != nil {
+				return resetAt
+			}
+		}
+	}
+	return volcengineResetAt(entry, now)
+}
+
+func firstStringField(entry map[string]any, keys ...string) string {
+	for _, key := range keys {
+		for entryKey, value := range entry {
+			if !strings.EqualFold(entryKey, key) {
+				continue
+			}
+			if s := strings.TrimSpace(fmt.Sprint(value)); s != "" && s != "<nil>" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+func firstNumberByKeyHint(entry map[string]any, hints ...string) (float64, bool) {
+	return firstNumberByKeyHintExcluding(entry, nil, hints...)
+}
+
+func firstNumberByKeyHintExcluding(entry map[string]any, excluded []string, hints ...string) (float64, bool) {
+	for _, hint := range hints {
+		for key, value := range entry {
+			normalized := normalizeQuotaKey(key)
+			skip := false
+			for _, excludedHint := range excluded {
+				if strings.Contains(normalized, excludedHint) {
+					skip = true
+					break
+				}
+			}
+			if skip {
+				continue
+			}
+			if strings.Contains(normalized, hint) {
+				return parseExtraFloat64(value), true
+			}
+		}
+	}
+	return 0, false
+}
+
+func normalizeQuotaKey(key string) string {
+	return strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(key, "-", "_"), " ", "_"))
+}
+
+func containsAnyHint(value string, hints []string) bool {
+	for _, hint := range hints {
+		if strings.Contains(value, strings.ToLower(strings.ReplaceAll(hint, "_", ""))) || strings.Contains(value, strings.ToLower(hint)) {
+			return true
+		}
+	}
+	return false
 }
 
 func newCodingPlanQuotaSnapshot(provider CodingPlanProvider, now time.Time, source string) *CodingPlanQuotaSnapshot {

@@ -82,7 +82,9 @@
                         ? 'https://open.bigmodel.cn'
                         : account.platform === 'minimax'
                           ? 'https://api.minimaxi.com'
-                          : account.platform === 'volcengine' || account.platform === 'mimo'
+                          : account.platform === 'volcengine'
+                            ? 'https://ark.cn-beijing.volces.com/api/v3'
+                          : account.platform === 'mimo'
                             ? 'https://...'
                             : 'https://api.anthropic.com'
             "
@@ -149,7 +151,53 @@
               </select>
             </div>
           </div>
-          <div v-if="codingPlanProvider === 'volcengine' || codingPlanProvider === 'mimo'" class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div v-if="effectiveCodingPlanProvider === 'volcengine'" class="mt-3 rounded-lg border border-gray-200 p-3 dark:border-dark-600">
+            <label class="input-label">{{ t('admin.accounts.codingPlan.volcengineOpenAPI') }}</label>
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div>
+                <label class="input-label">{{ t('admin.accounts.codingPlan.volcenginePlanType') }}</label>
+                <select v-model="volcenginePlanType" class="input">
+                  <option value="coding_plan">{{ t('admin.accounts.codingPlan.volcengineCodingPlan') }}</option>
+                  <option value="agent_plan">{{ t('admin.accounts.codingPlan.volcengineAgentPlan') }}</option>
+                </select>
+              </div>
+              <div>
+                <label class="input-label">{{ t('admin.accounts.codingPlan.volcengineRegion') }}</label>
+                <input v-model="volcengineRegion" type="text" class="input font-mono" placeholder="cn-beijing" />
+              </div>
+              <div>
+                <label class="input-label">{{ t('admin.accounts.codingPlan.volcengineAccessKeyId') }}</label>
+                <input v-model="volcengineAccessKeyId" type="text" class="input font-mono" placeholder="AKLT..." />
+              </div>
+              <div>
+                <label class="input-label">{{ t('admin.accounts.codingPlan.volcengineSecretAccessKey') }}</label>
+                <input
+                  v-model="volcengineSecretAccessKey"
+                  type="password"
+                  class="input font-mono"
+                  autocomplete="new-password"
+                  data-1p-ignore
+                  data-lpignore="true"
+                  data-bwignore="true"
+                  :placeholder="t('admin.accounts.leaveEmptyToKeep')"
+                />
+              </div>
+              <div>
+                <label class="input-label">{{ t('admin.accounts.codingPlan.volcengineSeatId') }}</label>
+                <input v-model="volcengineSeatId" type="text" class="input font-mono" />
+              </div>
+              <div>
+                <label class="input-label">{{ t('admin.accounts.codingPlan.volcengineAccountId') }}</label>
+                <input v-model="volcengineAccountId" type="text" class="input font-mono" />
+              </div>
+              <div class="md:col-span-2">
+                <label class="input-label">{{ t('admin.accounts.codingPlan.volcengineProjectName') }}</label>
+                <input v-model="volcengineProjectName" type="text" class="input" />
+              </div>
+            </div>
+            <p class="input-hint mt-2">{{ t('admin.accounts.codingPlan.volcengineOpenAPIHint') }}</p>
+          </div>
+          <div v-else-if="effectiveCodingPlanProvider === 'mimo'" class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
             <div>
               <label class="input-label">{{ t('admin.accounts.codingPlan.experimentalProbeUrl') }}</label>
               <input v-model="codingPlanExperimentalProbeUrl" type="text" class="input" placeholder="https://..." />
@@ -2564,6 +2612,9 @@ const detectCodingPlanProviderFromBaseUrl = (baseUrl: string): string => {
 }
 
 const detectedCodingPlanProvider = computed(() => detectCodingPlanProviderFromBaseUrl(editBaseUrl.value))
+const effectiveCodingPlanProvider = computed(() =>
+  codingPlanProvider.value || detectedCodingPlanProvider.value || (isDomesticCodingPlanPlatform(props.account?.platform || '') ? props.account?.platform || '' : '')
+)
 const detectedCodingPlanProviderLabel = computed(() => {
   const explicit = codingPlanProvider.value
   if (explicit) {
@@ -2671,6 +2722,13 @@ const codingPlanProvider = ref('')
 const codingPlanProbeStatus = ref('')
 const codingPlanExperimentalProbeUrl = ref('')
 const codingPlanExperimentalAuthMode = ref('bearer')
+const volcenginePlanType = ref<'coding_plan' | 'agent_plan'>('coding_plan')
+const volcengineRegion = ref('cn-beijing')
+const volcengineAccessKeyId = ref('')
+const volcengineSecretAccessKey = ref('')
+const volcengineSeatId = ref('')
+const volcengineAccountId = ref('')
+const volcengineProjectName = ref('')
 const mixedScheduling = ref(false) // For antigravity accounts: enable mixed scheduling
 const allowOverages = ref(false) // For antigravity accounts: enable AI Credits overages
 const antigravityModelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
@@ -2988,7 +3046,7 @@ const defaultBaseUrl = computed(() => {
   if (props.account?.platform === 'kimi') return 'https://api.kimi.com/coding'
   if (props.account?.platform === 'zhipu') return 'https://open.bigmodel.cn'
   if (props.account?.platform === 'minimax') return ''
-  if (props.account?.platform === 'volcengine') return ''
+  if (props.account?.platform === 'volcengine') return 'https://ark.cn-beijing.volces.com/api/v3'
   if (props.account?.platform === 'mimo') return ''
   return 'https://api.anthropic.com'
 })
@@ -3111,6 +3169,13 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 	  : typeof extra?.mimo_quota_probe_auth_mode === 'string'
 	    ? extra.mimo_quota_probe_auth_mode
 	    : 'bearer'
+	volcenginePlanType.value = extra?.volcengine_plan_type === 'agent_plan' ? 'agent_plan' : 'coding_plan'
+	volcengineRegion.value = typeof extra?.volcengine_region === 'string' ? extra.volcengine_region : 'cn-beijing'
+	volcengineAccessKeyId.value = typeof credentials?.volcengine_access_key_id === 'string' ? credentials.volcengine_access_key_id : ''
+	volcengineSecretAccessKey.value = ''
+	volcengineSeatId.value = typeof extra?.volcengine_seat_id === 'string' ? extra.volcengine_seat_id : ''
+	volcengineAccountId.value = typeof extra?.volcengine_account_id === 'string' ? extra.volcengine_account_id : ''
+	volcengineProjectName.value = typeof extra?.volcengine_project_name === 'string' ? extra.volcengine_project_name : ''
 
   // Load OpenAI passthrough toggle (OpenAI OAuth/API Key)
   openaiPassthroughEnabled.value = false
@@ -3877,8 +3942,8 @@ const handleSubmit = async () => {
         base_url: newBaseUrl
       }
       
-      // Handle Volcengine/MiMo/MiniMax base_url validation
-      if ((props.account.platform === 'volcengine' || props.account.platform === 'mimo' || props.account.platform === 'minimax') && !newBaseUrl) {
+      // Handle MiMo/MiniMax base_url validation
+      if ((props.account.platform === 'mimo' || props.account.platform === 'minimax') && !newBaseUrl) {
         appStore.showError(t('admin.accounts.codingPlan.baseUrlRequired'))
         return
       }
@@ -3899,6 +3964,16 @@ const handleSubmit = async () => {
       } else if (!hasExistingApiKey) {
         appStore.showError(t('admin.accounts.apiKeyIsRequired'))
         return
+      }
+      if (props.account.platform === 'volcengine') {
+        if (volcengineAccessKeyId.value.trim()) {
+          newCredentials.volcengine_access_key_id = volcengineAccessKeyId.value.trim()
+        } else {
+          delete newCredentials.volcengine_access_key_id
+        }
+        if (volcengineSecretAccessKey.value.trim()) {
+          newCredentials.volcengine_secret_access_key = volcengineSecretAccessKey.value.trim()
+        }
       }
 
       // Add model mapping if configured（OpenAI 开启自动透传时保留现有映射，不再编辑）
@@ -4294,19 +4369,34 @@ const handleSubmit = async () => {
       delete newExtra.volcengine_quota_probe_auth_mode
       delete newExtra.mimo_quota_probe_url
       delete newExtra.mimo_quota_probe_auth_mode
-      if (provider === 'volcengine' || provider === 'mimo') {
+      delete newExtra.volcengine_plan_type
+      delete newExtra.volcengine_region
+      delete newExtra.volcengine_service
+      delete newExtra.volcengine_seat_id
+      delete newExtra.volcengine_account_id
+      delete newExtra.volcengine_project_name
+      if (provider === 'volcengine') {
+        newExtra.coding_plan_probe_status = codingPlanProbeStatus.value || 'supported'
+        newExtra.volcengine_plan_type = volcenginePlanType.value
+        newExtra.volcengine_region = volcengineRegion.value.trim() || 'cn-beijing'
+        newExtra.volcengine_service = 'ark'
+        if (volcengineSeatId.value.trim()) {
+          newExtra.volcengine_seat_id = volcengineSeatId.value.trim()
+        }
+        if (volcengineAccountId.value.trim()) {
+          newExtra.volcengine_account_id = volcengineAccountId.value.trim()
+        }
+        if (volcengineProjectName.value.trim()) {
+          newExtra.volcengine_project_name = volcengineProjectName.value.trim()
+        }
+      } else if (provider === 'mimo') {
         const probeUrl = codingPlanExperimentalProbeUrl.value.trim()
         const authMode = codingPlanExperimentalAuthMode.value || 'bearer'
         if (probeUrl) {
-          if (provider === 'volcengine') {
-            newExtra.volcengine_quota_probe_url = probeUrl
-            newExtra.volcengine_quota_probe_auth_mode = authMode
-          } else {
-            newExtra.mimo_quota_probe_url = probeUrl
-            newExtra.mimo_quota_probe_auth_mode = authMode
-          }
+          newExtra.mimo_quota_probe_url = probeUrl
+          newExtra.mimo_quota_probe_auth_mode = authMode
           newExtra.coding_plan_probe_status = 'experimental'
-        } else if (provider === 'volcengine' || provider === 'mimo') {
+        } else {
           newExtra.coding_plan_probe_status = codingPlanProbeStatus.value || 'experimental'
         }
       }

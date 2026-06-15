@@ -617,7 +617,8 @@ const codingPlanProbeStatusLabel = computed(() => {
   if (status === 'unsupported') return t('admin.accounts.codingPlan.probeUnsupported')
   if (status === 'experimental') return t('admin.accounts.codingPlan.probeExperimental')
   if (status === 'supported') return t('admin.accounts.codingPlan.probeSupported')
-  if (codingPlanProvider.value === 'volcengine' || codingPlanProvider.value === 'mimo') return t('admin.accounts.codingPlan.probeExperimental')
+  if (codingPlanProvider.value === 'volcengine') return t('admin.accounts.codingPlan.probeSupported')
+  if (codingPlanProvider.value === 'mimo') return t('admin.accounts.codingPlan.probeExperimental')
   return t('admin.accounts.codingPlan.probeStatusAuto')
 })
 
