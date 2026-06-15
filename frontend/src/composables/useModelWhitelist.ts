@@ -83,6 +83,7 @@ const antigravityModels = [
 
 // 智谱 GLM
 const zhipuModels = [
+  'glm-5.1', 'glm-5.2', 'glm-5-turbo',
   'glm-4', 'glm-4v', 'glm-4-plus', 'glm-4-0520',
   'glm-4-air', 'glm-4-airx', 'glm-4-long', 'glm-4-flash',
   'glm-4v-plus', 'glm-4.5', 'glm-4.6',
@@ -157,7 +158,7 @@ const yiModels = [
 // Moonshot/Kimi
 const moonshotModels = [
   'moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k',
-  'kimi-latest'
+  'kimi-latest', 'kimi-k2-turbo-preview'
 ]
 
 // 字节跳动 豆包
@@ -169,12 +170,34 @@ const doubaoModels = [
   'doubao-1.5-pro-vision-32k', 'doubao-1.5-thinking-pro'
 ]
 
+// 火山引擎 Coding Plan / Ark
+// 暂以方舟（Ark）上常见的 Coding 适配模型为主；用户仍可通过自定义输入覆盖。
+const volcengineModels: string[] = [
+  'doubao-seed-1.6',
+  'doubao-seed-1.6-thinking',
+  'doubao-1.5-thinking-pro',
+  'doubao-1.5-pro-256k',
+  'doubao-1.5-pro-32k',
+  'doubao-1.5-lite-32k',
+  'doubao-pro-256k',
+  'doubao-pro-128k',
+  'doubao-pro-32k',
+  'doubao-lite-128k',
+  'doubao-lite-32k'
+]
+
 // MiniMax
 const minimaxModels = [
+  'MiniMax-M3', 'MiniMax-Text-01',
   'abab6.5-chat', 'abab6.5s-chat', 'abab6.5s-chat-pro',
   'abab6-chat',
   'abab5.5-chat', 'abab5.5s-chat'
 ]
+
+// 小米 MiMo Coding Plan
+// 当前公开渠道未发布稳定的 Coding Plan 模型清单；保留占位以便用户输入。
+// 注意：MiMo 配额自动探测尚未实现，前端 UI 文案需提示该平台为 experimental。
+const mimoModels: string[] = []
 
 // 百度 文心
 const baiduModels = [
@@ -221,7 +244,9 @@ const allModelsList: string[] = [
   ...yiModels,
   ...moonshotModels,
   ...doubaoModels,
+  ...volcengineModels,
   ...minimaxModels,
+  ...mimoModels,
   ...baiduModels,
   ...sparkModels,
   ...hunyuanModels,
@@ -374,13 +399,16 @@ export function getModelsByPlatform(platform: string): string[] {
     case 'xai': return xaiModels
     case 'cohere': return cohereModels
     case 'yi': return yiModels
-    case 'moonshot': return moonshotModels
+    case 'moonshot':
+    case 'kimi': return moonshotModels
     case 'doubao': return doubaoModels
+    case 'volcengine': return volcengineModels
     case 'minimax': return minimaxModels
     case 'baidu': return baiduModels
     case 'spark': return sparkModels
     case 'hunyuan': return hunyuanModels
     case 'perplexity': return perplexityModels
+    case 'mimo': return mimoModels
     default: return claudeModels
   }
 }
@@ -391,6 +419,7 @@ export function getPresetMappingsByPlatform(platform: string) {
   if (platform === 'gemini') return geminiPresetMappings
   if (platform === 'antigravity') return antigravityPresetMappings
   if (platform === 'bedrock') return bedrockPresetMappings
+  if (['kimi', 'moonshot', 'zhipu', 'minimax', 'volcengine', 'mimo', 'doubao', 'qwen', 'deepseek', 'mistral', 'meta', 'xai', 'cohere', 'yi', 'baidu', 'spark', 'hunyuan', 'perplexity'].includes(platform)) return []
   return anthropicPresetMappings
 }
 

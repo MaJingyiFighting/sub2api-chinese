@@ -487,7 +487,17 @@ export interface PaginationConfig {
 
 // ==================== API Key & Group Types ====================
 
-export type GroupPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity'
+export type GroupPlatform =
+  | 'anthropic'
+  | 'openai'
+  | 'gemini'
+  | 'antigravity'
+  | 'kimi'
+  | 'zhipu'
+  | 'minimax'
+  | 'volcengine'
+  | 'mimo'
+
 
 export type SubscriptionType = 'standard' | 'subscription'
 
@@ -690,7 +700,24 @@ export interface UpdateGroupRequest {
 
 // ==================== Account & Proxy Types ====================
 
-export type AccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity'
+export type AccountPlatform =
+  | 'anthropic'
+  | 'openai'
+  | 'gemini'
+  | 'antigravity'
+  | 'kimi'
+  | 'zhipu'
+  | 'minimax'
+  | 'volcengine'
+  | 'mimo'
+
+export const DOMESTIC_CODING_PLANS: AccountPlatform[] = [
+  'kimi',
+  'zhipu',
+  'minimax',
+  'volcengine',
+  'mimo'
+]
 export type AccountType = 'oauth' | 'setup-token' | 'apikey' | 'upstream' | 'bedrock' | 'service_account'
 export type OAuthAddMethod = 'oauth' | 'setup-token'
 export type ProxyProtocol = 'http' | 'https' | 'socks5' | 'socks5h'
@@ -945,7 +972,7 @@ export interface AntigravityModelQuota {
 }
 
 export interface AccountUsageInfo {
-  source?: 'passive' | 'active'
+  source?: 'passive' | 'active' | 'active_probe' | 'response_header' | 'error' | 'local_snapshot' | 'local_estimate'
   updated_at: string | null
   five_hour: UsageProgress | null
   seven_day: UsageProgress | null

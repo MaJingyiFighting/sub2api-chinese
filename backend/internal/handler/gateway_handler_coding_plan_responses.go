@@ -3,8 +3,10 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
@@ -20,7 +22,7 @@ import (
 // POST /v1/responses
 // This converts Responses API requests to Anthropic format, forwards to Anthropic
 // upstream, and converts responses back to Responses format.
-func (h *GatewayHandler) Responses(c *gin.Context) {
+func (h *GatewayHandler) CodingPlanResponses(c *gin.Context) {
 	streamStarted := false
 
 	requestStart := time.Now()
@@ -205,6 +207,27 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		account := selection.Account
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
+		// Anthropic Messages 风格的 Coding Plan 账号无法承接 Codex /v1/responses 流量，
+		// 把它从本次选号循环中剔除并继续 failover，让其它 Chat Completions 账号有机会接管；
+		// 只有当所有候选账号都是 Anthropic Messages 时，才在循环耗尽后由 selection 错误分支
+		// 返回 No available accounts。
+		if service.IsCodingPlanAnthropicMessagesAccount(account) {
+			if selection.ReleaseFunc != nil {
+				selection.ReleaseFunc()
+			}
+			reqLog.Warn("gateway.responses.skip_anthropic_messages_account",
+				zap.Int64("account_id", account.ID),
+				zap.String("platform", account.Platform),
+			)
+			fs.FailedAccountIDs[account.ID] = struct{}{}
+			if fs.SwitchCount >= fs.MaxSwitches {
+				h.responsesErrorResponse(c, http.StatusNotImplemented, "unsupported_platform", "该分组下没有可用的 Chat Completions 账号；Anthropic Messages 账号无法承接 Codex /v1/responses 流量，请改用 Chat Completions 格式账号或将其放到 /v1/messages 入口")
+				return
+			}
+			fs.SwitchCount++
+			continue
+		}
+
 		// 4. Acquire account concurrency slot
 		accountReleaseFunc := selection.ReleaseFunc
 		if !selection.Acquired {
@@ -222,21 +245,65 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 				&streamStarted,
 			)
 			if err != nil {
-				reqLog.Warn("gateway.responses.account_slot_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))
+				reqLog.Warn("gateway.coding_plan.account_slot_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 				h.handleConcurrencyError(c, err, "account", streamStarted)
 				return
 			}
 		}
 		accountReleaseFunc = wrapReleaseOnDone(c.Request.Context(), accountReleaseFunc)
 
-		// 5. Forward request
+		// 5. Force model mapping
+		// 国产 Coding Plan 模型与 OpenAI gpt-*/o*/codex-* 没有兼容关系，
+		// 必须由账号或渠道级 model_mapping 显式声明，否则 400 提示用户配置。
+		// 这样做有两个目的：
+		//   - 不让国产真实模型“伪装成 GPT”进入计费/统计/缓存命名空间
+		//   - 不在 handler 内置 gpt-* → kimi-k2.7-code/glm-5.2 这类隐式映射，
+		//     用户以为支持 gpt-5.5 但其实根本不是 OpenAI 在算
+		mappedModel := reqModel
+		if channelMapping.Mapped {
+			mappedModel = channelMapping.MappedModel
+		}
+		mappedModel = account.GetMappedModel(mappedModel)
+
+		if mappedModel == reqModel && (strings.HasPrefix(reqModel, "gpt-") || strings.HasPrefix(reqModel, "o") || strings.HasPrefix(reqModel, "codex-")) {
+			if accountReleaseFunc != nil {
+				accountReleaseFunc()
+			}
+			h.responsesErrorResponse(c, http.StatusBadRequest, "invalid_request_error",
+				fmt.Sprintf("模型 %q 不能直接路由到 %s（国产 Coding Plan）账号。请在该账号或所在分组上配置 model_mapping，把该 OpenAI 模型映射到此供应商的真实上游模型名（例如 kimi-k2-turbo-preview / glm-4.6 等）。", reqModel, account.Platform))
+			return
+		}
+
+		wireAPI := account.GetCredential("wire_api")
+		if wireAPI == "" {
+			wireAPI = account.GetCredential("api_format")
+		}
+		if wireAPI == "" {
+			wireAPI = "openai_chat"
+		}
+		responsesSupport := account.GetExtraString("responses_support")
+		if responsesSupport == "" {
+			responsesSupport = "via_chat_completions"
+		}
+
+		reqLog = reqLog.With(
+			zap.String("requested_model", reqModel),
+			zap.String("upstream_model", mappedModel),
+			zap.String("platform", account.Platform),
+			zap.String("wire_api", wireAPI),
+			zap.String("responses_support", responsesSupport),
+		)
+
+		// 6. Forward request
 		writerSizeBeforeForward := c.Writer.Size()
 		forwardBody := body
-		if channelMapping.Mapped {
-			forwardBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
+		if mappedModel != reqModel {
+			forwardBody = h.gatewayService.ReplaceModelInBody(body, mappedModel)
 		}
+		
 		var result *service.ForwardResult
-		result, err = h.gatewayService.ForwardAsResponses(requestCtx, c, account, forwardBody, parsedReq)
+		result, err = h.gatewayService.ForwardCodexResponsesViaChatCompletions(requestCtx, c, account, forwardBody, parsedReq)
+		
 		if accountReleaseFunc != nil {
 			accountReleaseFunc()
 		}
@@ -309,28 +376,3 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 }
 
 // responsesErrorResponse writes an error in OpenAI Responses API format.
-func (h *GatewayHandler) responsesErrorResponse(c *gin.Context, status int, code, message string) {
-	c.JSON(status, gin.H{
-		"error": gin.H{
-			"code":    code,
-			"message": message,
-		},
-	})
-}
-
-// handleResponsesFailoverExhausted writes a failover-exhausted error in Responses format.
-func (h *GatewayHandler) handleResponsesFailoverExhausted(c *gin.Context, lastErr *service.UpstreamFailoverError, streamStarted bool) {
-	if streamStarted {
-		return // Can't write error after stream started
-	}
-	statusCode := http.StatusBadGateway
-	if lastErr != nil && lastErr.StatusCode > 0 {
-		statusCode = lastErr.StatusCode
-	}
-	if lastErr != nil && service.IsOpenAISilentRefusalErrorBody(lastErr.ResponseBody) {
-		service.SetOpsUpstreamError(c, statusCode, service.OpenAISilentRefusalClientMessage(), "")
-		h.responsesErrorResponse(c, http.StatusBadGateway, "upstream_error", service.OpenAISilentRefusalClientMessage())
-		return
-	}
-	h.responsesErrorResponse(c, statusCode, "server_error", "All available accounts exhausted")
-}

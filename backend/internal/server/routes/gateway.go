@@ -67,15 +67,25 @@ func RegisterGatewayRoutes(
 		gateway.GET("/usage", h.Gateway.Usage)
 		// OpenAI Responses API: auto-route based on group platform
 		gateway.POST("/responses", func(c *gin.Context) {
-			if getGroupPlatform(c) == service.PlatformOpenAI {
+			platform := getGroupPlatform(c)
+			if platform == service.PlatformOpenAI {
 				h.OpenAIGateway.Responses(c)
+				return
+			}
+			if service.IsCodingPlanPlatform(platform) {
+				h.Gateway.CodingPlanResponses(c)
 				return
 			}
 			h.Gateway.Responses(c)
 		})
 		gateway.POST("/responses/*subpath", func(c *gin.Context) {
-			if getGroupPlatform(c) == service.PlatformOpenAI {
+			platform := getGroupPlatform(c)
+			if platform == service.PlatformOpenAI {
 				h.OpenAIGateway.Responses(c)
+				return
+			}
+			if service.IsCodingPlanPlatform(platform) {
+				h.Gateway.CodingPlanResponses(c)
 				return
 			}
 			h.Gateway.Responses(c)
@@ -147,8 +157,13 @@ func RegisterGatewayRoutes(
 
 	// OpenAI Responses API（不带v1前缀的别名）— auto-route based on group platform
 	responsesHandler := func(c *gin.Context) {
-		if getGroupPlatform(c) == service.PlatformOpenAI {
+		platform := getGroupPlatform(c)
+		if platform == service.PlatformOpenAI {
 			h.OpenAIGateway.Responses(c)
+			return
+		}
+		if service.IsCodingPlanPlatform(platform) {
+			h.Gateway.CodingPlanResponses(c)
 			return
 		}
 		h.Gateway.Responses(c)

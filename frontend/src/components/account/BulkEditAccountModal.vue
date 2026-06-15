@@ -1053,6 +1053,79 @@
         </div>
       </div>
 
+      <!-- Coding Plan Fields -->
+      <div v-if="allDomesticCodingPlan" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <!-- Provider -->
+        <div class="mb-3 flex items-center justify-between">
+          <label class="input-label mb-0" for="bulk-edit-cp-provider-enabled">
+            {{ t('admin.accounts.codingPlan.provider') }}
+          </label>
+          <input
+            v-model="enableCodingPlanProvider"
+            id="bulk-edit-cp-provider-enabled"
+            type="checkbox"
+            aria-controls="bulk-edit-cp-provider-body"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+        </div>
+        <div id="bulk-edit-cp-provider-body" :class="!enableCodingPlanProvider && 'pointer-events-none opacity-50'">
+          <input
+            v-model="codingPlanProvider"
+            type="text"
+            class="input"
+            :placeholder="t('admin.accounts.codingPlan.providerAuto')"
+          />
+        </div>
+
+        <!-- Probe Status -->
+        <div class="mt-4 mb-3 flex items-center justify-between">
+          <label class="input-label mb-0" for="bulk-edit-cp-probe-status-enabled">
+            {{ t('admin.accounts.codingPlan.probeStatus') }}
+          </label>
+          <input
+            v-model="enableCodingPlanProbeStatus"
+            id="bulk-edit-cp-probe-status-enabled"
+            type="checkbox"
+            aria-controls="bulk-edit-cp-probe-status-body"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+        </div>
+        <div id="bulk-edit-cp-probe-status-body" :class="!enableCodingPlanProbeStatus && 'pointer-events-none opacity-50'">
+          <Select
+            v-model="codingPlanProbeStatus"
+            :options="codingPlanProbeStatusOptions"
+          />
+        </div>
+
+        <!-- Probe URL for volcengine/mimo -->
+        <div v-if="hasVolcengineOrMiMo" class="mt-4 border-t border-gray-100 pt-4 dark:border-dark-700">
+          <div class="mb-3 flex items-center justify-between">
+            <label class="input-label mb-0" for="bulk-edit-cp-probe-url-enabled">
+              {{ t('admin.accounts.codingPlan.experimentalProbeUrl') }}
+            </label>
+            <input
+              v-model="enableCodingPlanExperimentalProbe"
+              id="bulk-edit-cp-probe-url-enabled"
+              type="checkbox"
+              aria-controls="bulk-edit-cp-probe-url-body"
+              class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+            />
+          </div>
+          <div id="bulk-edit-cp-probe-url-body" :class="!enableCodingPlanExperimentalProbe && 'pointer-events-none opacity-50'" class="space-y-3">
+            <input
+              v-model="codingPlanExperimentalProbeUrl"
+              type="text"
+              class="input"
+              :placeholder="t('admin.accounts.codingPlan.experimentalProbeUrlHint')"
+            />
+            <Select
+              v-model="codingPlanExperimentalAuthMode"
+              :options="codingPlanExperimentalAuthModeOptions"
+            />
+          </div>
+        </div>
+      </div>
+
       <!-- Groups -->
       <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <div class="mb-3 flex items-center justify-between">
@@ -1225,6 +1298,15 @@ const allAnthropicOAuthOrSetupToken = computed(() => {
   )
 })
 
+const allDomesticCodingPlan = computed(() => {
+  return targetSelectedPlatforms.value.length > 0 &&
+    targetSelectedPlatforms.value.every(p => ['kimi', 'zhipu', 'minimax', 'volcengine', 'mimo'].includes(p))
+})
+
+const hasVolcengineOrMiMo = computed(() => {
+  return targetSelectedPlatforms.value.some(p => ['volcengine', 'mimo'].includes(p))
+})
+
 const filteredPresets = computed(() => {
   if (targetSelectedPlatforms.value.length === 0) return []
 
@@ -1268,6 +1350,10 @@ const enableOpenAICompactMode = ref(false)
 const enableOpenAICompactModelMapping = ref(false)
 const enableRpmLimit = ref(false)
 
+const enableCodingPlanProvider = ref(false)
+const enableCodingPlanProbeStatus = ref(false)
+const enableCodingPlanExperimentalProbe = ref(false)
+
 // State - field values
 const submitting = ref(false)
 const showMixedChannelWarning = ref(false)
@@ -1299,6 +1385,12 @@ const bulkBaseRpm = ref<number | null>(null)
 const bulkRpmStrategy = ref<'tiered' | 'sticky_exempt'>('tiered')
 const bulkRpmStickyBuffer = ref<number | null>(null)
 const userMsgQueueMode = ref<string | null>(null)
+
+const codingPlanProvider = ref('')
+const codingPlanProbeStatus = ref('')
+const codingPlanExperimentalProbeUrl = ref('')
+const codingPlanExperimentalAuthMode = ref('bearer')
+
 const umqModeOptions = computed(() => [
   { value: '', label: t('admin.accounts.quotaControl.rpmLimit.umqModeOff') },
   { value: 'throttle', label: t('admin.accounts.quotaControl.rpmLimit.umqModeThrottle') },
@@ -1319,6 +1411,20 @@ const commonErrorCodes = [
 const statusOptions = computed(() => [
   { value: 'active', label: t('common.active') },
   { value: 'inactive', label: t('common.inactive') }
+])
+
+const codingPlanProbeStatusOptions = computed(() => [
+  { value: '', label: t('admin.accounts.codingPlan.probeStatusAuto') },
+  { value: 'active', label: t('admin.accounts.codingPlan.probeStatusActive') || 'Active' },
+  { value: 'experimental', label: t('admin.accounts.codingPlan.probeExperimental') },
+  { value: 'unsupported', label: t('admin.accounts.codingPlan.probeUnsupported') },
+  { value: 'failed', label: t('admin.accounts.codingPlan.probeStatusFailed') || 'Failed' },
+  { value: 'suspended', label: t('admin.accounts.codingPlan.probeStatusSuspended') || 'Suspended' }
+])
+
+const codingPlanExperimentalAuthModeOptions = computed(() => [
+  { value: 'bearer', label: t('admin.accounts.codingPlan.authRaw') },
+  { value: 'none', label: t('admin.accounts.codingPlan.authNone') }
 ])
 const isOpenAIModelRestrictionDisabled = computed(
   () =>
@@ -1584,6 +1690,29 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     umqExtra.user_msg_queue_enabled = false  // 清理旧字段（JSONB merge）
   }
 
+  // Coding Plan Provider bulk edit
+  if (enableCodingPlanProvider.value) {
+    const extra = ensureExtra()
+    extra.coding_plan_provider = codingPlanProvider.value
+  }
+
+  if (enableCodingPlanProbeStatus.value) {
+    const extra = ensureExtra()
+    extra.coding_plan_probe_status = codingPlanProbeStatus.value
+  }
+
+  if (enableCodingPlanExperimentalProbe.value) {
+    const extra = ensureExtra()
+    const probeUrl = codingPlanExperimentalProbeUrl.value.trim()
+    const authMode = codingPlanExperimentalAuthMode.value || 'bearer'
+    
+    // 我们批量将实验探针URL和AuthMode设置到这俩字段上
+    extra.volcengine_quota_probe_url = probeUrl
+    extra.volcengine_quota_probe_auth_mode = authMode
+    extra.mimo_quota_probe_url = probeUrl
+    extra.mimo_quota_probe_auth_mode = authMode
+  }
+
   if (credentialsChanged) {
     updates.credentials = credentials
   }
@@ -1657,7 +1786,10 @@ const handleSubmit = async () => {
     enableOpenAICompactMode.value ||
     enableOpenAICompactModelMapping.value ||
     enableRpmLimit.value ||
-    userMsgQueueMode.value !== null
+    userMsgQueueMode.value !== null ||
+    enableCodingPlanProvider.value ||
+    enableCodingPlanProbeStatus.value ||
+    enableCodingPlanExperimentalProbe.value
 
   if (!hasAnyFieldEnabled) {
     appStore.showError(t('admin.accounts.bulkEdit.noFieldsSelected'))
@@ -1760,6 +1892,9 @@ watch(
       enableOpenAICompactMode.value = false
       enableOpenAICompactModelMapping.value = false
       enableRpmLimit.value = false
+      enableCodingPlanProvider.value = false
+      enableCodingPlanProbeStatus.value = false
+      enableCodingPlanExperimentalProbe.value = false
 
       // Reset all values
       baseUrl.value = ''
@@ -1788,6 +1923,10 @@ watch(
       bulkRpmStrategy.value = 'tiered'
       bulkRpmStickyBuffer.value = null
       userMsgQueueMode.value = null
+      codingPlanProvider.value = ''
+      codingPlanProbeStatus.value = ''
+      codingPlanExperimentalProbeUrl.value = ''
+      codingPlanExperimentalAuthMode.value = 'bearer'
 
       // Reset mixed channel warning state
       showMixedChannelWarning.value = false

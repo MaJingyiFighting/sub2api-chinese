@@ -60,4 +60,31 @@ describe('buildOpenAIUsageRefreshKey', () => {
       extra: {}
     } as any)).toBe('')
   })
+
+  it('国产 Coding Plan API Key 会在配额快照变化时生成不同 key', () => {
+    const base = {
+      id: 4,
+      platform: 'openai',
+      type: 'apikey',
+      updated_at: '2026-06-14T10:00:00Z',
+      last_used_at: '2026-06-14T09:59:00Z',
+      extra: {
+        coding_plan_provider: 'kimi',
+        coding_plan_usage_updated_at: '2026-06-14T10:00:00Z',
+        coding_plan_5h_used_percent: 20,
+        coding_plan_weekly_used_percent: 30
+      }
+    } as any
+
+    const next = {
+      ...base,
+      extra: {
+        ...base.extra,
+        coding_plan_usage_updated_at: '2026-06-14T10:10:00Z',
+        coding_plan_5h_used_percent: 80
+      }
+    }
+
+    expect(buildOpenAIUsageRefreshKey(base)).not.toBe(buildOpenAIUsageRefreshKey(next))
+  })
 })
