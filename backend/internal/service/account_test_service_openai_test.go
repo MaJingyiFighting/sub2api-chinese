@@ -480,3 +480,58 @@ func TestAccountTestService_OpenAIChatCompletionsPathRejectsNonJSONStream(t *tes
 	require.Contains(t, recorder.Body.String(), "/v1/chat/completions")
 	require.NotContains(t, recorder.Body.String(), `"success":true`)
 }
+
+func TestAccountTestService_CodingPlanChatCompletionsUsesProviderPath(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	upstreamBody := strings.Join([]string{
+		`data: {"id":"chatcmpl_test","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"pong"},"finish_reason":null}]}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+	account := &Account{
+		ID:          95,
+		Platform:    string(CodingPlanProviderMiniMax),
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":    "minimax-key",
+			"base_url":   "https://api.minimaxi.com/v1",
+			"api_format": "chat_completions",
+		},
+		Extra: map[string]any{
+			"coding_plan_provider": string(CodingPlanProviderMiniMax),
+		},
+	}
+	svc := &AccountTestService{
+		accountRepo: &openAIAccountTestRepo{
+			mockAccountRepoForGemini: mockAccountRepoForGemini{
+				accountsByID: map[int64]*Account{account.ID: account},
+			},
+		},
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+
+	err := svc.TestAccountConnection(ctx, account.ID, "MiniMax-M3", "hello", "")
+	require.NoError(t, err)
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(upstream.lastReq.Context()))
+	require.Equal(t, "https://api.minimaxi.com/v1/chat/completions", upstream.lastReq.URL.String())
+	require.Equal(t, "Bearer minimax-key", upstream.lastReq.Header.Get("Authorization"))
+	require.Empty(t, upstream.lastReq.Header.Get("x-api-key"))
+	require.Empty(t, upstream.lastReq.Header.Get("anthropic-version"))
+	require.Equal(t, "MiniMax-M3", gjson.GetBytes(upstream.lastBody, "model").String())
+	require.True(t, gjson.GetBytes(upstream.lastBody, "stream").Bool())
+	require.Equal(t, "hello", gjson.GetBytes(upstream.lastBody, "messages.0.content").String())
+	require.Contains(t, recorder.Body.String(), "Coding Plan /chat/completions")
+	require.Contains(t, recorder.Body.String(), "pong")
+	require.Contains(t, recorder.Body.String(), `"success":true`)
+}
