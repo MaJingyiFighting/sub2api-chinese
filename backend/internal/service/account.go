@@ -71,8 +71,10 @@ type Account struct {
 type OpenAIEndpointCapability string
 
 const (
-	OpenAIEndpointCapabilityChatCompletions OpenAIEndpointCapability = "chat_completions"
-	OpenAIEndpointCapabilityEmbeddings      OpenAIEndpointCapability = "embeddings"
+	OpenAIEndpointCapabilityChatCompletions         OpenAIEndpointCapability = "chat_completions"
+	OpenAIEndpointCapabilityEmbeddings              OpenAIEndpointCapability = "embeddings"
+	OpenAIEndpointCapabilityResponses               OpenAIEndpointCapability = "responses"
+	OpenAIEndpointCapabilityCodexResponsesViaChat   OpenAIEndpointCapability = "codex_responses_via_chat"
 )
 
 const openAIEndpointCapabilitiesCredentialKey = "openai_capabilities"
@@ -1099,7 +1101,7 @@ func (a *Account) GetOpenAIIDToken() string {
 }
 
 func (a *Account) GetOpenAIApiKey() string {
-	if !a.IsOpenAIApiKey() {
+	if !a.IsOpenAIApiKey() && !(IsCodingPlanAccount(a) && a.Type == AccountTypeAPIKey) {
 		return ""
 	}
 	return a.GetCredential("api_key")
@@ -1140,13 +1142,19 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 	if capability == "" {
 		return true
 	}
-	if !a.IsOpenAI() {
+	isDomestic := IsCodingPlanAccount(a)
+	if !a.IsOpenAI() && !isDomestic {
 		return false
 	}
 	switch capability {
-	case OpenAIEndpointCapabilityChatCompletions:
+	case OpenAIEndpointCapabilityChatCompletions, OpenAIEndpointCapabilityResponses:
 	case OpenAIEndpointCapabilityEmbeddings:
-		if a.Type != AccountTypeAPIKey {
+		if !a.IsOpenAI() || a.Type != AccountTypeAPIKey {
+			return false
+		}
+	case OpenAIEndpointCapabilityCodexResponsesViaChat:
+		// Requires an API key account, doesn't work for OAuth as OAuth is directly Codex
+		if !a.IsOpenAI() || a.Type != AccountTypeAPIKey {
 			return false
 		}
 	default:
@@ -1208,12 +1216,13 @@ func (a *Account) openAIEndpointCapabilitySet() (map[string]bool, bool) {
 }
 
 func (a *Account) SupportsOpenAIImageCapability(capability OpenAIImagesCapability) bool {
-	if !a.IsOpenAI() {
+	isDomestic := IsCodingPlanAccount(a)
+	if !a.IsOpenAI() && !isDomestic {
 		return false
 	}
 	switch capability {
 	case OpenAIImagesCapabilityBasic, OpenAIImagesCapabilityNative:
-		return a.Type == AccountTypeOAuth || a.Type == AccountTypeAPIKey
+		return a.Type == AccountTypeOAuth || (a.Type == AccountTypeAPIKey && a.IsOpenAI())
 	default:
 		return true
 	}

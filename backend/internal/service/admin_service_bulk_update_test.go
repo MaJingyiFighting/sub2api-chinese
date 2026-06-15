@@ -172,6 +172,38 @@ func TestAdminService_BulkUpdateAccounts_NilGroupRepoReturnsError(t *testing.T) 
 	require.Contains(t, err.Error(), "group repository not configured")
 }
 
+func TestAdminService_BulkUpdateAccounts_RejectsMiniMaxAccountInOpenAIGroup(t *testing.T) {
+	repo := &accountRepoStubForBulkUpdate{
+		getByIDsAccounts: []*Account{
+			{
+				ID:       1,
+				Platform: string(CodingPlanProviderMiniMax),
+				Extra:    map[string]any{"coding_plan_provider": "minimax"},
+			},
+		},
+	}
+	svc := &adminServiceImpl{
+		accountRepo: repo,
+		groupRepo: &groupRepoStubForAdmin{
+			getByID: &Group{ID: 10, Name: "openai-default", Platform: PlatformOpenAI},
+		},
+	}
+
+	groupIDs := []int64{10}
+	input := &BulkUpdateAccountsInput{
+		AccountIDs:            []int64{1},
+		GroupIDs:              &groupIDs,
+		SkipMixedChannelCheck: true,
+	}
+
+	result, err := svc.BulkUpdateAccounts(context.Background(), input)
+	require.Nil(t, result)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `account platform "minimax" cannot bind to group 10 with platform "openai"`)
+	require.Empty(t, repo.bulkUpdateIDs)
+	require.Empty(t, repo.bindGroupsCalls)
+}
+
 // TestAdminService_BulkUpdateAccounts_MixedChannelPreCheckBlocksOnExistingConflict verifies
 // that the global pre-check detects a conflict with existing group members and returns an
 // error before any DB write is performed.

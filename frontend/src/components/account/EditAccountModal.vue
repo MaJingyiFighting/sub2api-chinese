@@ -28,6 +28,41 @@
 
       <!-- API Key fields (only for apikey type) -->
       <div v-if="account.type === 'apikey'" class="space-y-4">
+        <!-- API Format Selection (for domestic platforms) -->
+        <div v-if="isDomesticCodingPlanPlatform(account.platform)">
+          <label class="input-label">{{ t('admin.accounts.codingPlan.apiFormat') }}</label>
+          <div class="mt-2 flex gap-4">
+            <label class="flex cursor-pointer items-center">
+              <input
+                v-model="editApiFormat"
+                type="radio"
+                value="chat_completions"
+                class="mr-2 text-primary-600 focus:ring-primary-500"
+              />
+              <span class="text-sm text-gray-700 dark:text-gray-300">Chat Completions</span>
+            </label>
+            <label class="flex cursor-pointer items-center">
+              <input
+                v-model="editApiFormat"
+                type="radio"
+                value="anthropic_messages"
+                class="mr-2 text-primary-600 focus:ring-primary-500"
+              />
+              <span class="text-sm text-gray-700 dark:text-gray-300">
+                Anthropic Messages
+                <span class="ml-1 text-xs text-amber-600 dark:text-amber-400">（仅 /v1/messages）</span>
+              </span>
+            </label>
+          </div>
+          <p class="input-hint mt-1">{{ t('admin.accounts.codingPlan.apiFormatHint') }}</p>
+          <p
+            v-if="editApiFormat === 'anthropic_messages'"
+            class="mt-1 text-xs text-amber-600 dark:text-amber-400"
+          >
+            注意：选择 Anthropic Messages 后，该账号只承接 /v1/messages（Claude Code 风格）请求；不会被 Codex /v1/responses 路由调度。
+          </p>
+        </div>
+
         <div>
           <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
           <input
@@ -41,7 +76,17 @@
                   ? 'https://generativelanguage.googleapis.com'
                   : account.platform === 'antigravity'
                     ? 'https://cloudcode-pa.googleapis.com'
-                    : 'https://api.anthropic.com'
+                    : account.platform === 'kimi'
+                      ? 'https://api.kimi.com/coding'
+                      : account.platform === 'zhipu'
+                        ? 'https://open.bigmodel.cn'
+                        : account.platform === 'minimax'
+                          ? 'https://api.minimaxi.com'
+                          : account.platform === 'volcengine'
+                            ? 'https://ark.cn-beijing.volces.com/api/v3'
+                          : account.platform === 'mimo'
+                            ? 'https://...'
+                            : 'https://api.anthropic.com'
             "
           />
           <p class="input-hint">{{ baseUrlHint }}</p>
@@ -61,12 +106,112 @@
                 ? 'sk-proj-...'
                 : account.platform === 'gemini'
                   ? 'AIza...'
-                  : account.platform === 'antigravity'
-                    ? 'sk-...'
-                    : 'sk-ant-...'
+                  : account.platform === 'anthropic'
+                    ? 'sk-ant-...'
+                    : 'sk-...'
             "
           />
           <p class="input-hint">{{ t('admin.accounts.leaveEmptyToKeep') }}</p>
+        </div>
+
+        <!-- Quota Probe Base URL (for domestic platforms) -->
+        <div v-if="isDomesticCodingPlanPlatform(account.platform)">
+          <label class="input-label">{{ t('admin.accounts.codingPlan.quotaBaseUrl') }}</label>
+          <input
+            v-model="editQuotaBaseUrl"
+            type="text"
+            class="input"
+            :placeholder="t('admin.accounts.codingPlan.quotaBaseUrlPlaceholder')"
+          />
+          <p class="input-hint">{{ t('admin.accounts.codingPlan.quotaBaseUrlHint') }}</p>
+        </div>
+
+        <div v-if="account.platform === 'openai' || isDomesticCodingPlanPlatform(account.platform)" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+          <label class="input-label">{{ t('admin.accounts.codingPlan.title') }}</label>
+          <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div>
+              <label class="input-label">{{ t('admin.accounts.codingPlan.provider') }}</label>
+              <select v-model="codingPlanProvider" class="input">
+                <option value="">{{ t('admin.accounts.codingPlan.providerAuto') }}</option>
+                <option value="kimi">Kimi For Coding</option>
+                <option value="zhipu">Zhipu GLM</option>
+                <option value="minimax">MiniMax</option>
+                <option value="volcengine">{{ t('admin.accounts.codingPlan.volcengine') }}</option>
+                <option value="mimo">{{ t('admin.accounts.codingPlan.mimo') }}</option>
+              </select>
+              <p class="input-hint">{{ detectedCodingPlanProviderLabel }}</p>
+            </div>
+            <div>
+              <label class="input-label">{{ t('admin.accounts.codingPlan.probeStatus') }}</label>
+              <select v-model="codingPlanProbeStatus" class="input">
+                <option value="">{{ t('admin.accounts.codingPlan.probeStatusAuto') }}</option>
+                <option value="supported">{{ t('admin.accounts.codingPlan.probeSupported') }}</option>
+                <option value="unsupported">{{ t('admin.accounts.codingPlan.probeUnsupported') }}</option>
+                <option value="experimental">{{ t('admin.accounts.codingPlan.probeExperimental') }}</option>
+              </select>
+            </div>
+          </div>
+          <div v-if="effectiveCodingPlanProvider === 'volcengine'" class="mt-3 rounded-lg border border-gray-200 p-3 dark:border-dark-600">
+            <label class="input-label">{{ t('admin.accounts.codingPlan.volcengineOpenAPI') }}</label>
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div>
+                <label class="input-label">{{ t('admin.accounts.codingPlan.volcenginePlanType') }}</label>
+                <select v-model="volcenginePlanType" class="input">
+                  <option value="coding_plan">{{ t('admin.accounts.codingPlan.volcengineCodingPlan') }}</option>
+                  <option value="agent_plan">{{ t('admin.accounts.codingPlan.volcengineAgentPlan') }}</option>
+                </select>
+              </div>
+              <div>
+                <label class="input-label">{{ t('admin.accounts.codingPlan.volcengineRegion') }}</label>
+                <input v-model="volcengineRegion" type="text" class="input font-mono" placeholder="cn-beijing" />
+              </div>
+              <div>
+                <label class="input-label">{{ t('admin.accounts.codingPlan.volcengineAccessKeyId') }}</label>
+                <input v-model="volcengineAccessKeyId" type="text" class="input font-mono" placeholder="AKLT..." />
+              </div>
+              <div>
+                <label class="input-label">{{ t('admin.accounts.codingPlan.volcengineSecretAccessKey') }}</label>
+                <input
+                  v-model="volcengineSecretAccessKey"
+                  type="password"
+                  class="input font-mono"
+                  autocomplete="new-password"
+                  data-1p-ignore
+                  data-lpignore="true"
+                  data-bwignore="true"
+                  :placeholder="t('admin.accounts.leaveEmptyToKeep')"
+                />
+              </div>
+              <div>
+                <label class="input-label">{{ t('admin.accounts.codingPlan.volcengineSeatId') }}</label>
+                <input v-model="volcengineSeatId" type="text" class="input font-mono" />
+              </div>
+              <div>
+                <label class="input-label">{{ t('admin.accounts.codingPlan.volcengineAccountId') }}</label>
+                <input v-model="volcengineAccountId" type="text" class="input font-mono" />
+              </div>
+              <div class="md:col-span-2">
+                <label class="input-label">{{ t('admin.accounts.codingPlan.volcengineProjectName') }}</label>
+                <input v-model="volcengineProjectName" type="text" class="input" />
+              </div>
+            </div>
+            <p class="input-hint mt-2">{{ t('admin.accounts.codingPlan.volcengineOpenAPIHint') }}</p>
+          </div>
+          <div v-else-if="effectiveCodingPlanProvider === 'mimo'" class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div>
+              <label class="input-label">{{ t('admin.accounts.codingPlan.experimentalProbeUrl') }}</label>
+              <input v-model="codingPlanExperimentalProbeUrl" type="text" class="input" placeholder="https://..." />
+              <p class="input-hint">{{ t('admin.accounts.codingPlan.experimentalProbeUrlHint') }}</p>
+            </div>
+            <div>
+              <label class="input-label">{{ t('admin.accounts.codingPlan.experimentalAuthMode') }}</label>
+              <select v-model="codingPlanExperimentalAuthMode" class="input">
+                <option value="bearer">Bearer</option>
+                <option value="raw">{{ t('admin.accounts.codingPlan.authRaw') }}</option>
+                <option value="none">{{ t('admin.accounts.codingPlan.authNone') }}</option>
+              </select>
+            </div>
+          </div>
         </div>
 
         <!-- Model Restriction Section (不适用于 Antigravity) -->
@@ -2427,6 +2572,10 @@ interface Props {
 }
 
 const props = defineProps<Props>()
+
+const isDomesticCodingPlanPlatform = (platform: string) =>
+  ['kimi', 'zhipu', 'minimax', 'volcengine', 'mimo'].includes(platform)
+
 const emit = defineEmits<{
   close: []
   updated: [account: Account]
@@ -2442,6 +2591,44 @@ const baseUrlHint = computed(() => {
   if (props.account.platform === 'openai') return t('admin.accounts.openai.baseUrlHint')
   if (props.account.platform === 'gemini') return t('admin.accounts.gemini.baseUrlHint')
   return t('admin.accounts.baseUrlHint')
+})
+
+const codingPlanProviderLabels: Record<string, string> = {
+  kimi: 'Kimi For Coding',
+  zhipu: 'Zhipu GLM',
+  minimax: 'MiniMax',
+  volcengine: 'Volcengine',
+  mimo: 'MiMo'
+}
+
+const detectCodingPlanProviderFromBaseUrl = (baseUrl: string): string => {
+  const value = baseUrl.trim().toLowerCase()
+  if (value.includes('api.kimi.com/coding')) return 'kimi'
+  if (value.includes('open.bigmodel.cn') || value.includes('bigmodel.cn') || value.includes('api.z.ai')) return 'zhipu'
+  if (value.includes('api.minimaxi.com') || value.includes('api.minimax.io')) return 'minimax'
+  if (value.includes('volces.com') || value.includes('volcengine') || value.includes('ark.cn-beijing.volces.com') || value.includes('ark.volces.com')) return 'volcengine'
+  if (value.includes('mimo') || value.includes('mi.com') || value.includes('xiaomi')) return 'mimo'
+  return ''
+}
+
+const detectedCodingPlanProvider = computed(() => detectCodingPlanProviderFromBaseUrl(editBaseUrl.value))
+const effectiveCodingPlanProvider = computed(() =>
+  codingPlanProvider.value || detectedCodingPlanProvider.value || (isDomesticCodingPlanPlatform(props.account?.platform || '') ? props.account?.platform || '' : '')
+)
+const detectedCodingPlanProviderLabel = computed(() => {
+  const explicit = codingPlanProvider.value
+  if (explicit) {
+    return t('admin.accounts.codingPlan.providerExplicit', {
+      provider: codingPlanProviderLabels[explicit] || explicit
+    })
+  }
+  const detected = detectedCodingPlanProvider.value
+  if (detected) {
+    return t('admin.accounts.codingPlan.providerDetected', {
+      provider: codingPlanProviderLabels[detected] || detected
+    })
+  }
+  return t('admin.accounts.codingPlan.providerHint')
 })
 
 const antigravityPresetMappings = computed(() => getPresetMappingsByPlatform('antigravity'))
@@ -2464,6 +2651,8 @@ interface TempUnschedRuleForm {
 const submitting = ref(false)
 const editBaseUrl = ref('https://api.anthropic.com')
 const editApiKey = ref('')
+const editApiFormat = ref<'chat_completions' | 'anthropic_messages'>('chat_completions')
+const editQuotaBaseUrl = ref('')
 // Bedrock credentials
 const editBedrockAccessKeyId = ref('')
 const editBedrockSecretAccessKey = ref('')
@@ -2529,6 +2718,17 @@ const autoPause5hThreshold = ref<number | null>(null)
 const autoPause7dThreshold = ref<number | null>(null)
 const autoPause5hDisabled = ref(false)
 const autoPause7dDisabled = ref(false)
+const codingPlanProvider = ref('')
+const codingPlanProbeStatus = ref('')
+const codingPlanExperimentalProbeUrl = ref('')
+const codingPlanExperimentalAuthMode = ref('bearer')
+const volcenginePlanType = ref<'coding_plan' | 'agent_plan'>('coding_plan')
+const volcengineRegion = ref('cn-beijing')
+const volcengineAccessKeyId = ref('')
+const volcengineSecretAccessKey = ref('')
+const volcengineSeatId = ref('')
+const volcengineAccountId = ref('')
+const volcengineProjectName = ref('')
 const mixedScheduling = ref(false) // For antigravity accounts: enable mixed scheduling
 const allowOverages = ref(false) // For antigravity accounts: enable AI Credits overages
 const antigravityModelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
@@ -2842,6 +3042,12 @@ const tempUnschedPresets = computed(() => [
 const defaultBaseUrl = computed(() => {
   if (props.account?.platform === 'openai') return 'https://api.openai.com'
   if (props.account?.platform === 'gemini') return 'https://generativelanguage.googleapis.com'
+  if (props.account?.platform === 'antigravity') return 'https://cloudcode-pa.googleapis.com'
+  if (props.account?.platform === 'kimi') return 'https://api.kimi.com/coding'
+  if (props.account?.platform === 'zhipu') return 'https://open.bigmodel.cn'
+  if (props.account?.platform === 'minimax') return ''
+  if (props.account?.platform === 'volcengine') return 'https://ark.cn-beijing.volces.com/api/v3'
+  if (props.account?.platform === 'mimo') return ''
   return 'https://api.anthropic.com'
 })
 
@@ -2951,6 +3157,25 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 	autoPause7dThreshold.value = typeof extra?.auto_pause_7d_threshold === 'number' ? extra.auto_pause_7d_threshold * 100 : null
 	autoPause5hDisabled.value = extra?.auto_pause_5h_disabled === true
 	autoPause7dDisabled.value = extra?.auto_pause_7d_disabled === true
+	codingPlanProvider.value = typeof extra?.coding_plan_provider === 'string' ? extra.coding_plan_provider : ''
+	codingPlanProbeStatus.value = typeof extra?.coding_plan_probe_status === 'string' ? extra.coding_plan_probe_status : ''
+	codingPlanExperimentalProbeUrl.value = typeof extra?.volcengine_quota_probe_url === 'string'
+	  ? extra.volcengine_quota_probe_url
+	  : typeof extra?.mimo_quota_probe_url === 'string'
+	    ? extra.mimo_quota_probe_url
+	    : ''
+	codingPlanExperimentalAuthMode.value = typeof extra?.volcengine_quota_probe_auth_mode === 'string'
+	  ? extra.volcengine_quota_probe_auth_mode
+	  : typeof extra?.mimo_quota_probe_auth_mode === 'string'
+	    ? extra.mimo_quota_probe_auth_mode
+	    : 'bearer'
+	volcenginePlanType.value = extra?.volcengine_plan_type === 'agent_plan' ? 'agent_plan' : 'coding_plan'
+	volcengineRegion.value = typeof extra?.volcengine_region === 'string' ? extra.volcengine_region : 'cn-beijing'
+	volcengineAccessKeyId.value = typeof credentials?.volcengine_access_key_id === 'string' ? credentials.volcengine_access_key_id : ''
+	volcengineSecretAccessKey.value = ''
+	volcengineSeatId.value = typeof extra?.volcengine_seat_id === 'string' ? extra.volcengine_seat_id : ''
+	volcengineAccountId.value = typeof extra?.volcengine_account_id === 'string' ? extra.volcengine_account_id : ''
+	volcengineProjectName.value = typeof extra?.volcengine_project_name === 'string' ? extra.volcengine_project_name : ''
 
   // Load OpenAI passthrough toggle (OpenAI OAuth/API Key)
   openaiPassthroughEnabled.value = false
@@ -3100,6 +3325,15 @@ const syncFormFromAccount = (newAccount: Account | null) => {
           : 'https://api.anthropic.com'
     editBaseUrl.value = (credentials.base_url as string) || platformDefaultUrl
 
+    if (isDomesticCodingPlanPlatform(newAccount.platform)) {
+      editApiFormat.value = (credentials.api_format as 'chat_completions' | 'anthropic_messages') || 'chat_completions'
+      const extra = newAccount.extra as Record<string, unknown> | undefined
+      editQuotaBaseUrl.value = (extra?.quota_base_url as string) || ''
+    } else {
+      editApiFormat.value = 'chat_completions'
+      editQuotaBaseUrl.value = ''
+    }
+
     // Load model mappings and detect mode
     loadModelRestrictionFromMapping(credentials.model_mapping as Record<string, unknown> | undefined)
 
@@ -3208,6 +3442,21 @@ watch(
   },
   { immediate: true }
 )
+
+watch(editApiFormat, (format) => {
+  if (props.account && isDomesticCodingPlanPlatform(props.account.platform)) {
+    const platform = props.account.platform
+    if (platform === 'kimi') {
+      editBaseUrl.value = format === 'anthropic_messages' ? 'https://api.moonshot.cn/anthropic' : 'https://api.moonshot.cn/v1'
+    } else if (platform === 'zhipu') {
+      editBaseUrl.value = format === 'anthropic_messages' ? 'https://open.bigmodel.cn/api/anthropic' : 'https://open.bigmodel.cn/api/coding/paas/v4'
+    } else if (platform === 'minimax') {
+      editBaseUrl.value = 'https://api.minimaxi.com'
+    } else {
+      editBaseUrl.value = ''
+    }
+  }
+})
 
 // Model mapping helpers
 const addModelMapping = () => {
@@ -3692,6 +3941,16 @@ const handleSubmit = async () => {
         ...currentCredentials,
         base_url: newBaseUrl
       }
+      
+      // Handle MiMo/MiniMax base_url validation
+      if ((props.account.platform === 'mimo' || props.account.platform === 'minimax') && !newBaseUrl) {
+        appStore.showError(t('admin.accounts.codingPlan.baseUrlRequired'))
+        return
+      }
+
+      if (isDomesticCodingPlanPlatform(props.account.platform)) {
+        newCredentials.api_format = editApiFormat.value
+      }
 
       // Handle API key
       // 后端响应已脱敏：currentCredentials 不会再包含 api_key 原文。
@@ -3705,6 +3964,16 @@ const handleSubmit = async () => {
       } else if (!hasExistingApiKey) {
         appStore.showError(t('admin.accounts.apiKeyIsRequired'))
         return
+      }
+      if (props.account.platform === 'volcengine') {
+        if (volcengineAccessKeyId.value.trim()) {
+          newCredentials.volcengine_access_key_id = volcengineAccessKeyId.value.trim()
+        } else {
+          delete newCredentials.volcengine_access_key_id
+        }
+        if (volcengineSecretAccessKey.value.trim()) {
+          newCredentials.volcengine_secret_access_key = volcengineSecretAccessKey.value.trim()
+        }
       }
 
       // Add model mapping if configured（OpenAI 开启自动透传时保留现有映射，不再编辑）
@@ -4072,6 +4341,68 @@ const handleSubmit = async () => {
       updatePayload.extra = newExtra
     }
 
+    // Handle coding plan provider in extra
+    if ((props.account.platform === 'openai' || isDomesticCodingPlanPlatform(props.account.platform)) && props.account.type === 'apikey') {
+      const currentExtra = (updatePayload.extra as Record<string, unknown>) || (props.account.extra as Record<string, unknown>) || {}
+      const newExtra: Record<string, unknown> = { ...currentExtra }
+      const provider = codingPlanProvider.value || detectedCodingPlanProvider.value
+      if (provider) {
+        newExtra.coding_plan_provider = provider
+      } else {
+        delete newExtra.coding_plan_provider
+      }
+      if (codingPlanProbeStatus.value) {
+        newExtra.coding_plan_probe_status = codingPlanProbeStatus.value
+      } else {
+        delete newExtra.coding_plan_probe_status
+      }
+
+      if (isDomesticCodingPlanPlatform(props.account.platform)) {
+        if (editQuotaBaseUrl.value.trim()) {
+          newExtra.quota_base_url = editQuotaBaseUrl.value.trim()
+        } else {
+          delete newExtra.quota_base_url
+        }
+      }
+
+      delete newExtra.volcengine_quota_probe_url
+      delete newExtra.volcengine_quota_probe_auth_mode
+      delete newExtra.mimo_quota_probe_url
+      delete newExtra.mimo_quota_probe_auth_mode
+      delete newExtra.volcengine_plan_type
+      delete newExtra.volcengine_region
+      delete newExtra.volcengine_service
+      delete newExtra.volcengine_seat_id
+      delete newExtra.volcengine_account_id
+      delete newExtra.volcengine_project_name
+      if (provider === 'volcengine') {
+        newExtra.coding_plan_probe_status = codingPlanProbeStatus.value || 'supported'
+        newExtra.volcengine_plan_type = volcenginePlanType.value
+        newExtra.volcengine_region = volcengineRegion.value.trim() || 'cn-beijing'
+        newExtra.volcengine_service = 'ark'
+        if (volcengineSeatId.value.trim()) {
+          newExtra.volcengine_seat_id = volcengineSeatId.value.trim()
+        }
+        if (volcengineAccountId.value.trim()) {
+          newExtra.volcengine_account_id = volcengineAccountId.value.trim()
+        }
+        if (volcengineProjectName.value.trim()) {
+          newExtra.volcengine_project_name = volcengineProjectName.value.trim()
+        }
+      } else if (provider === 'mimo') {
+        const probeUrl = codingPlanExperimentalProbeUrl.value.trim()
+        const authMode = codingPlanExperimentalAuthMode.value || 'bearer'
+        if (probeUrl) {
+          newExtra.mimo_quota_probe_url = probeUrl
+          newExtra.mimo_quota_probe_auth_mode = authMode
+          newExtra.coding_plan_probe_status = 'experimental'
+        } else {
+          newExtra.coding_plan_probe_status = codingPlanProbeStatus.value || 'experimental'
+        }
+      }
+      updatePayload.extra = newExtra
+    }
+
     // For OpenAI OAuth/API Key accounts, handle passthrough mode in extra
 	if (props.account.platform === 'openai' && (props.account.type === 'oauth' || props.account.type === 'apikey')) {
 		const currentExtra = (props.account.extra as Record<string, unknown>) || {}
@@ -4097,13 +4428,13 @@ const handleSubmit = async () => {
       } else {
         newExtra.openai_compact_mode = openAICompactMode.value
       }
-		if (props.account.type === 'apikey') {
+      if (props.account.type === 'apikey') {
         if (!openAITextGenerationCapabilityEnabled.value || openAIResponsesMode.value === 'auto') {
           delete newExtra.openai_responses_mode
         } else {
           newExtra.openai_responses_mode = openAIResponsesMode.value
         }
-		}
+      }
 		if (autoPause5hThreshold.value != null && autoPause5hThreshold.value > 0) {
 			newExtra.auto_pause_5h_threshold = autoPause5hThreshold.value / 100
 		} else {

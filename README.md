@@ -40,6 +40,17 @@ Sub2API is an AI API gateway platform designed to distribute and manage API quot
 - **Admin Dashboard** - Web interface for monitoring and management
 - **External System Integration** - Embed external systems (e.g. ticketing) via iframe to extend the admin dashboard
 
+## Domestic Coding Plan Providers
+
+Kimi, Zhipu, MiniMax, Volcengine, and MiMo are treated as dedicated account platforms. New accounts should use `platform=kimi/zhipu/minimax/volcengine/mimo` instead of `platform=openai` with a domestic `base_url`.
+
+Quota probe support:
+
+- **Supported**: Kimi, Zhipu, MiniMax
+- **Experimental**: Volcengine, MiMo
+
+Volcengine and MiMo may use custom experimental probe URLs, but they do not currently have verified built-in official quota parsers in this codebase. Automatic pause/recovery for those two providers should be treated as best-effort.
+
 ## ❤️ Sponsors
 
 > [Want to appear here?](mailto:support@pincc.ai)

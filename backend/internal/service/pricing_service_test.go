@@ -129,6 +129,27 @@ func TestDefaultPricingIncludesCodexAutoReview(t *testing.T) {
 	require.InDelta(t, 5e-7, got.CacheReadInputTokenCost, 1e-12)
 }
 
+func TestDefaultPricingIncludesMiniMaxM3CNYPricing(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "resources", "model-pricing", "model_prices_and_context_window.json"))
+	require.NoError(t, err)
+
+	svc := &PricingService{}
+	pricingData, err := svc.parsePricingData(data)
+	require.NoError(t, err)
+
+	got := pricingData["MiniMax-M3"]
+	require.NotNil(t, got)
+	require.Equal(t, "minimax", got.LiteLLMProvider)
+	require.InDelta(t, 2.1e-6, got.InputCostPerToken, 1e-12)
+	require.InDelta(t, 8.4e-6, got.OutputCostPerToken, 1e-12)
+	require.InDelta(t, 4.2e-7, got.CacheReadInputTokenCost, 1e-12)
+	require.InDelta(t, 3.15e-6, got.InputCostPerTokenPriority, 1e-12)
+	require.InDelta(t, 12.6e-6, got.OutputCostPerTokenPriority, 1e-12)
+	require.Equal(t, 512000, got.LongContextInputTokenThreshold)
+	require.InDelta(t, 2.0, got.LongContextInputCostMultiplier, 1e-12)
+	require.InDelta(t, 2.0, got.LongContextOutputCostMultiplier, 1e-12)
+}
+
 func TestGetModelPricing_Gpt54MiniUsesDedicatedStaticFallbackWhenRemoteMissing(t *testing.T) {
 	svc := &PricingService{
 		pricingData: map[string]*LiteLLMModelPricing{

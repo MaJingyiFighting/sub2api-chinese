@@ -141,6 +141,35 @@ func TestAdminService_ListGroups_PassesSortParams(t *testing.T) {
 	}, repo.listWithFiltersParams)
 }
 
+func TestDefaultModelsListCandidateIDs_MiniMax(t *testing.T) {
+	models := defaultModelsListCandidateIDs(string(CodingPlanProviderMiniMax))
+	require.Equal(t, []string{
+		"MiniMax-M3",
+		"MiniMax-M2.7",
+		"MiniMax-M2.7-highspeed",
+	}, models)
+}
+
+func TestAdminService_CreateAccount_RejectsMiniMaxAccountInOpenAIGroup(t *testing.T) {
+	svc := &adminServiceImpl{
+		accountRepo: &accountRepoStub{},
+		groupRepo: &groupRepoStubForAdmin{
+			getByID: &Group{ID: 10, Name: "openai-default", Platform: PlatformOpenAI},
+		},
+	}
+
+	_, err := svc.CreateAccount(context.Background(), &CreateAccountInput{
+		Name:                  "minimax-account",
+		Platform:              string(CodingPlanProviderMiniMax),
+		Type:                  AccountTypeAPIKey,
+		Extra:                 map[string]any{"coding_plan_provider": "minimax"},
+		GroupIDs:              []int64{10},
+		SkipMixedChannelCheck: true,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `account platform "minimax" cannot bind to group 10 with platform "openai"`)
+}
+
 // TestAdminService_CreateGroup_WithImagePricing 测试创建分组时 ImagePrice 字段正确传递
 func TestAdminService_CreateGroup_WithImagePricing(t *testing.T) {
 	repo := &groupRepoStubForAdmin{}
