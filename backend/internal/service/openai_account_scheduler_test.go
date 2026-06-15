@@ -467,6 +467,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultDisabled_Embeddi
 		OpenAIUpstreamTransportHTTPSSE,
 		OpenAIEndpointCapabilityEmbeddings,
 		false,
+		"",
 	)
 	require.NoError(t, err)
 	require.NotNil(t, selection)
@@ -591,6 +592,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_Enabled_EmbeddingsSkips
 		OpenAIUpstreamTransportHTTPSSE,
 		OpenAIEndpointCapabilityEmbeddings,
 		false,
+		"",
 	)
 	require.NoError(t, err)
 	require.NotNil(t, selection)
@@ -664,6 +666,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_Enabled_EmbeddingsSkips
 		OpenAIUpstreamTransportHTTPSSE,
 		OpenAIEndpointCapabilityEmbeddings,
 		false,
+		"",
 	)
 	require.NoError(t, err)
 	require.NotNil(t, selection)

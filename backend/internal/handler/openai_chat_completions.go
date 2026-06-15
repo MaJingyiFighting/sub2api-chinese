@@ -141,6 +141,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			service.OpenAIUpstreamTransportAny,
 			service.OpenAIEndpointCapabilityChatCompletions,
 			false,
+			string(service.QuotaPlatform(c.Request.Context(), apiKey)),
 		)
 		if err != nil {
 			reqLog.Warn("openai_chat_completions.account_select_failed",

@@ -4105,6 +4105,26 @@ export default {
         passiveSampled: 'Passive',
         activeQuery: 'Query'
       },
+      codingPlan: {
+        title: 'Coding Plan Scheduling',
+        provider: 'Provider',
+        providerAuto: 'Detect from Base URL',
+        providerHint: 'Kimi, Zhipu, and MiniMax quota queries are supported. Volcengine and MiMo quota probes are experimental and may not pause or recover accounts accurately.',
+        providerDetected: 'Detected from Base URL: {provider}',
+        providerExplicit: 'Manually set: {provider}',
+        probeStatus: 'Quota query',
+        probeStatusAuto: 'Auto',
+        probeSupported: 'Supported',
+        probeUnsupported: 'Unsupported',
+        probeExperimental: 'Experimental',
+        volcengine: 'Volcengine Agent Plan / Coding Plan',
+        mimo: 'Xiaomi MiMo',
+        experimentalProbeUrl: 'Experimental quota probe URL',
+        experimentalProbeUrlHint: 'Only fill this after you have verified the endpoint. Empty values still mark the quota probe as experimental.',
+        experimentalAuthMode: 'Auth mode',
+        authRaw: 'Raw Authorization',
+        authNone: 'No Authorization'
+      },
       tier: {
         free: 'Free',
         pro: 'Pro',

@@ -70,82 +70,21 @@
       <!-- Platform Selection - Segmented Control Style -->
       <div>
         <label class="input-label">{{ t('admin.accounts.platform') }}</label>
-        <div class="mt-2 flex rounded-lg bg-gray-100 p-1 dark:bg-dark-700" data-tour="account-form-platform">
+        <div class="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-4 md:grid-cols-5 rounded-lg bg-gray-100 p-1.5 dark:bg-dark-700" data-tour="account-form-platform">
           <button
+            v-for="p in availablePlatforms"
+            :key="p.id"
             type="button"
-            @click="form.platform = 'anthropic'"
+            @click="handlePlatformSelect(p.id)"
             :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
-              form.platform === 'anthropic'
-                ? 'bg-white text-orange-600 shadow-sm dark:bg-dark-600 dark:text-orange-400'
-                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+              'flex flex-col sm:flex-row items-center justify-center gap-1.5 rounded-md px-2 py-2 text-sm font-medium transition-all min-h-[44px]',
+              form.platform === p.id
+                ? 'bg-white shadow-sm dark:bg-dark-600 ' + p.activeColor
+                : 'text-gray-600 hover:text-gray-900 hover:bg-white/50 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-dark-600/50'
             ]"
           >
-            <Icon name="sparkles" size="sm" />
-            Anthropic
-          </button>
-          <button
-            type="button"
-            @click="form.platform = 'openai'"
-            :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
-              form.platform === 'openai'
-                ? 'bg-white text-green-600 shadow-sm dark:bg-dark-600 dark:text-green-400'
-                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
-            ]"
-          >
-            <svg
-              class="h-4 w-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              stroke-width="1.5"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z"
-              />
-            </svg>
-            OpenAI
-          </button>
-          <button
-            type="button"
-            @click="form.platform = 'gemini'"
-            :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
-              form.platform === 'gemini'
-                ? 'bg-white text-blue-600 shadow-sm dark:bg-dark-600 dark:text-blue-400'
-                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
-            ]"
-          >
-            <svg
-              class="h-4 w-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              stroke-width="1.5"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d="M12 2l1.5 6.5L20 10l-6.5 1.5L12 18l-1.5-6.5L4 10l6.5-1.5L12 2z"
-              />
-            </svg>
-            Gemini
-          </button>
-          <button
-            type="button"
-            @click="form.platform = 'antigravity'"
-            :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
-              form.platform === 'antigravity'
-                ? 'bg-white text-purple-600 shadow-sm dark:bg-dark-600 dark:text-purple-400'
-                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
-            ]"
-          >
-            <Icon name="cloud" size="sm" />
-            Antigravity
+            <PlatformIcon :platform="p.id" size="sm" class="shrink-0" />
+            <span class="truncate">{{ p.label }}</span>
           </button>
         </div>
       </div>
@@ -1010,6 +949,41 @@
 
       <!-- API Key input (only for apikey type, excluding Antigravity which has its own fields) -->
       <div v-if="form.type === 'apikey' && form.platform !== 'antigravity'" class="space-y-4">
+        <!-- API Format Selection (for domestic platforms) -->
+        <div v-if="isDomesticCodingPlanPlatform(form.platform)">
+          <label class="input-label">{{ t('admin.accounts.codingPlan.apiFormat') }}</label>
+          <div class="mt-2 flex gap-4">
+            <label class="flex cursor-pointer items-center">
+              <input
+                v-model="apiFormat"
+                type="radio"
+                value="chat_completions"
+                class="mr-2 text-primary-600 focus:ring-primary-500"
+              />
+              <span class="text-sm text-gray-700 dark:text-gray-300">Chat Completions</span>
+            </label>
+            <label class="flex cursor-pointer items-center">
+              <input
+                v-model="apiFormat"
+                type="radio"
+                value="anthropic_messages"
+                class="mr-2 text-primary-600 focus:ring-primary-500"
+              />
+              <span class="text-sm text-gray-700 dark:text-gray-300">
+                Anthropic Messages
+                <span class="ml-1 text-xs text-amber-600 dark:text-amber-400">（仅 /v1/messages）</span>
+              </span>
+            </label>
+          </div>
+          <p class="input-hint mt-1">{{ t('admin.accounts.codingPlan.apiFormatHint') }}</p>
+          <p
+            v-if="apiFormat === 'anthropic_messages'"
+            class="mt-1 text-xs text-amber-600 dark:text-amber-400"
+          >
+            注意：选择 Anthropic Messages 后，该账号只承接 /v1/messages（Claude Code 风格）请求；不会被 Codex /v1/responses 路由调度。
+          </p>
+        </div>
+
         <div>
           <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
           <input
@@ -1021,7 +995,13 @@
                 ? 'https://api.openai.com'
                 : form.platform === 'gemini'
                   ? 'https://generativelanguage.googleapis.com'
-                  : 'https://api.anthropic.com'
+                  : form.platform === 'kimi'
+                    ? (apiFormat === 'anthropic_messages' ? 'https://api.moonshot.cn/anthropic' : 'https://api.moonshot.cn/v1')
+                    : form.platform === 'zhipu'
+                      ? (apiFormat === 'anthropic_messages' ? 'https://open.bigmodel.cn/api/anthropic' : 'https://open.bigmodel.cn/api/coding/paas/v4')
+                      : isDomesticCodingPlanPlatform(form.platform)
+                        ? 'experimental: please enter upstream url manually'
+                        : 'https://api.anthropic.com'
             "
           />
           <p class="input-hint">{{ baseUrlHint }}</p>
@@ -1042,6 +1022,18 @@
             "
           />
           <p class="input-hint">{{ apiKeyHint }}</p>
+        </div>
+
+        <!-- Quota Probe Base URL (for domestic platforms) -->
+        <div v-if="isDomesticCodingPlanPlatform(form.platform)">
+          <label class="input-label">{{ t('admin.accounts.codingPlan.quotaBaseUrl') }}</label>
+          <input
+            v-model="quotaBaseUrl"
+            type="text"
+            class="input"
+            :placeholder="t('admin.accounts.codingPlan.quotaBaseUrlPlaceholder')"
+          />
+          <p class="input-hint">{{ t('admin.accounts.codingPlan.quotaBaseUrlHint') }}</p>
         </div>
 
         <!-- Gemini API Key tier selection -->
@@ -3233,6 +3225,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
+import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
 import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
@@ -3361,6 +3354,8 @@ const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_acco
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
 const apiKeyValue = ref('')
+const apiFormat = ref<'chat_completions' | 'anthropic_messages'>('chat_completions')
+const quotaBaseUrl = ref('')
 
 const syncPreviewCredentials = computed(() => {
   if (!apiKeyValue.value) return undefined
@@ -3681,6 +3676,37 @@ const tempUnschedPresets = computed(() => [
   }
 ])
 
+const availablePlatforms: { id: AccountPlatform; label: string; activeColor: string }[] = [
+  { id: 'anthropic', label: 'Anthropic', activeColor: 'text-orange-600 dark:text-orange-400' },
+  { id: 'openai', label: 'OpenAI', activeColor: 'text-green-600 dark:text-green-400' },
+  { id: 'gemini', label: 'Gemini', activeColor: 'text-blue-600 dark:text-blue-400' },
+  { id: 'antigravity', label: 'Antigravity', activeColor: 'text-purple-600 dark:text-purple-400' },
+  { id: 'kimi', label: 'Kimi', activeColor: 'text-gray-800 dark:text-gray-200' },
+  { id: 'zhipu', label: 'Zhipu', activeColor: 'text-indigo-600 dark:text-indigo-400' },
+  { id: 'minimax', label: 'MiniMax', activeColor: 'text-rose-600 dark:text-rose-400' },
+  { id: 'volcengine', label: 'Volcengine', activeColor: 'text-blue-500 dark:text-blue-300' },
+  { id: 'mimo', label: 'MiMo', activeColor: 'text-teal-600 dark:text-teal-400' }
+]
+
+const isDomesticCodingPlanPlatform = (platform: string) =>
+  ['kimi', 'zhipu', 'minimax', 'volcengine', 'mimo'].includes(platform)
+
+function handlePlatformSelect(p: AccountPlatform) {
+  form.platform = p;
+  // Auto-switch to apikey for domestic platforms
+  if (isDomesticCodingPlanPlatform(p)) {
+    form.type = 'apikey';
+    accountCategory.value = 'apikey';
+  } else if (p === 'anthropic' || p === 'gemini') {
+    form.type = 'oauth';
+  } else if (p === 'openai') {
+    form.type = 'oauth';
+  } else if (p === 'antigravity') {
+    form.type = 'oauth';
+  }
+}
+
+
 const form = reactive({
   name: '',
   notes: '',
@@ -3766,18 +3792,24 @@ watch(
 // Sync form.type based on accountCategory, addMethod, and platform-specific type
 watch(
   [accountCategory, addMethod, antigravityAccountType, () => form.platform],
-  ([category, method, agType]) => {
+  ([category, method, agType, platform]) => {
+    // Domestic platforms
+    if (isDomesticCodingPlanPlatform(platform as string)) {
+      form.type = 'apikey'
+      modelRestrictionMode.value = 'mapping'
+      return
+    }
     // Antigravity upstream 类型（实际创建为 apikey）
-    if (form.platform === 'antigravity' && agType === 'upstream') {
+    if (platform === 'antigravity' && agType === 'upstream') {
       form.type = 'apikey'
       return
     }
     // Bedrock 类型
-    if (form.platform === 'anthropic' && category === 'bedrock') {
+    if (platform === 'anthropic' && category === 'bedrock') {
       form.type = 'bedrock' as AccountType
       return
     }
-    if ((form.platform === 'gemini' || form.platform === 'anthropic') && category === 'service_account') {
+    if ((platform === 'gemini' || platform === 'anthropic') && category === 'service_account') {
       form.type = 'service_account' as AccountType
     } else if (category === 'oauth-based') {
       form.type = method as AccountType // 'oauth' or 'setup-token'
@@ -3790,15 +3822,27 @@ watch(
 
 // Reset platform-specific settings when platform changes
 watch(
-  () => form.platform,
-  (newPlatform) => {
-    // Reset base URL based on platform
-    apiKeyBaseUrl.value =
-      (newPlatform === 'openai')
-        ? 'https://api.openai.com'
-        : newPlatform === 'gemini'
-          ? 'https://generativelanguage.googleapis.com'
-          : 'https://api.anthropic.com'
+  [() => form.platform, apiFormat],
+  ([newPlatform, format]) => {
+    // Reset base URL based on platform and format
+    if (isDomesticCodingPlanPlatform(newPlatform)) {
+      if (newPlatform === 'kimi') {
+        apiKeyBaseUrl.value = format === 'anthropic_messages' ? 'https://api.moonshot.cn/anthropic' : 'https://api.moonshot.cn/v1'
+      } else if (newPlatform === 'zhipu') {
+        apiKeyBaseUrl.value = format === 'anthropic_messages' ? 'https://open.bigmodel.cn/api/anthropic' : 'https://open.bigmodel.cn/api/coding/paas/v4'
+      } else if (newPlatform === 'minimax') {
+        apiKeyBaseUrl.value = ''
+      } else {
+        apiKeyBaseUrl.value = ''
+      }
+    } else {
+      apiKeyBaseUrl.value =
+        (newPlatform === 'openai')
+          ? 'https://api.openai.com'
+          : newPlatform === 'gemini'
+            ? 'https://generativelanguage.googleapis.com'
+            : 'https://api.anthropic.com'
+    }
     // Clear model-related settings
     allowedModels.value = []
     modelMappings.value = []
@@ -4213,6 +4257,8 @@ const resetForm = () => {
   addMethod.value = 'oauth'
   apiKeyBaseUrl.value = 'https://api.anthropic.com'
   apiKeyValue.value = ''
+  apiFormat.value = 'chat_completions'
+  quotaBaseUrl.value = ''
   editQuotaLimit.value = null
   editQuotaDailyLimit.value = null
   editQuotaWeeklyLimit.value = null
@@ -4611,18 +4657,41 @@ const handleSubmit = async () => {
     return
   }
 
+  // Handle Volcengine/MiMo/MiniMax base_url validation
+  if ((form.platform === 'volcengine' || form.platform === 'mimo' || form.platform === 'minimax') && !apiKeyBaseUrl.value.trim()) {
+    appStore.showError(t('admin.accounts.codingPlan.baseUrlRequired'))
+    return
+  }
+
   // Determine default base URL based on platform
-  const defaultBaseUrl =
-    form.platform === 'openai'
-      ? 'https://api.openai.com'
-      : form.platform === 'gemini'
-        ? 'https://generativelanguage.googleapis.com'
-        : 'https://api.anthropic.com'
+  let defaultBaseUrl = 'https://api.anthropic.com'
+  if (form.platform === 'openai') {
+    defaultBaseUrl = 'https://api.openai.com'
+  } else if (form.platform === 'gemini') {
+    defaultBaseUrl = 'https://generativelanguage.googleapis.com'
+  } else if (form.platform === 'kimi') {
+    defaultBaseUrl = apiFormat.value === 'anthropic_messages' ? 'https://api.moonshot.cn/anthropic' : 'https://api.moonshot.cn/v1'
+  } else if (form.platform === 'zhipu') {
+    defaultBaseUrl = apiFormat.value === 'anthropic_messages' ? 'https://open.bigmodel.cn/api/anthropic' : 'https://open.bigmodel.cn/api/coding/paas/v4'
+  } else if (form.platform === 'minimax') {
+    defaultBaseUrl = '' // No fixed default, user must provide
+  } else if (form.platform === 'volcengine') {
+    defaultBaseUrl = '' // No fixed default, user must provide
+  } else if (form.platform === 'mimo') {
+    defaultBaseUrl = '' // No fixed default, user must provide
+  }
 
   // Build credentials with optional model mapping
   const credentials: Record<string, unknown> = {
     base_url: apiKeyBaseUrl.value.trim() || defaultBaseUrl,
     api_key: apiKeyValue.value.trim()
+  }
+  if (isDomesticCodingPlanPlatform(form.platform)) {
+    credentials.api_format = apiFormat.value
+    credentials.wire_api = apiFormat.value === 'chat_completions' ? 'openai_chat' : 'anthropic_messages'
+    if (apiFormat.value === 'chat_completions') {
+      credentials.chat_completions_route_enabled = true
+    }
   }
   if (form.platform === 'gemini') {
     credentials.tier_id = geminiTierAIStudio.value
@@ -4665,7 +4734,16 @@ const handleSubmit = async () => {
   }
 
   form.credentials = credentials
-  const extra = buildAnthropicExtra(buildOpenAIExtra())
+  const extra = buildAnthropicExtra(buildOpenAIExtra()) || {}
+
+  if (isDomesticCodingPlanPlatform(form.platform)) {
+    extra.coding_plan_provider = form.platform
+    extra.coding_plan_probe_status = (form.platform === 'volcengine' || form.platform === 'mimo') ? 'experimental' : 'supported'
+    if (quotaBaseUrl.value.trim()) {
+      extra.quota_base_url = quotaBaseUrl.value.trim()
+    }
+    extra.responses_support = apiFormat.value === 'chat_completions' ? 'via_chat_completions' : 'via_anthropic_messages'
+  }
 
   await doCreateAccount({
     ...form,

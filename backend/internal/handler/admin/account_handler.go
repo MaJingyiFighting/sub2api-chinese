@@ -20,6 +20,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/codingplan"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
@@ -525,6 +526,11 @@ func (h *AccountHandler) Create(c *gin.Context) {
 	// base_rpm 输入校验：负值归零，超过 10000 截断
 	sanitizeExtraBaseRPM(req.Extra)
 
+	if err := validateCodingPlanProvider(req.Platform, req.Type, req.Credentials, req.Extra); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
 	// 确定是否跳过混合渠道检查
 	skipCheck := req.ConfirmMixedChannelRisk != nil && *req.ConfirmMixedChannelRisk
 
@@ -609,10 +615,25 @@ func (h *AccountHandler) Update(c *gin.Context) {
 	// base_rpm 输入校验：负值归零，超过 10000 截断
 	sanitizeExtraBaseRPM(req.Extra)
 
+	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	effectiveType := account.Type
+	if strings.TrimSpace(req.Type) != "" {
+		effectiveType = req.Type
+	}
+	if err := validateCodingPlanProvider(account.Platform, effectiveType, req.Credentials, req.Extra); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
 	// 确定是否跳过混合渠道检查
 	skipCheck := req.ConfirmMixedChannelRisk != nil && *req.ConfirmMixedChannelRisk
 
-	account, err := h.adminService.UpdateAccount(c.Request.Context(), accountID, &service.UpdateAccountInput{
+	account, err = h.adminService.UpdateAccount(c.Request.Context(), accountID, &service.UpdateAccountInput{
 		Name:                  req.Name,
 		Notes:                 req.Notes,
 		Type:                  req.Type,
@@ -1320,6 +1341,13 @@ func (h *AccountHandler) BatchCreate(c *gin.Context) {
 		return
 	}
 
+	for _, acc := range req.Accounts {
+		if err := validateCodingPlanProvider(acc.Platform, acc.Type, acc.Credentials, acc.Extra); err != nil {
+			response.BadRequest(c, err.Error())
+			return
+		}
+	}
+
 	executeAdminIdempotentJSON(c, "admin.accounts.batch_create", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
 		success := 0
 		failed := 0
@@ -1553,6 +1581,12 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 	if !hasUpdates {
 		response.BadRequest(c, "No updates provided")
 		return
+	}
+	if req.Filters != nil && req.Filters.Platform == service.PlatformOpenAI {
+		if err := validateCodingPlanProvider(service.PlatformOpenAI, req.Filters.Type, req.Credentials, req.Extra); err != nil {
+			response.BadRequest(c, err.Error())
+			return
+		}
 	}
 
 	result, err := h.adminService.BulkUpdateAccounts(c.Request.Context(), &service.BulkUpdateAccountsInput{
@@ -2063,6 +2097,45 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 		return
 	}
 
+	// Handle Domestic Coding Plan Providers
+	if service.IsCodingPlanAccount(account) {
+		// 国产 Coding Plan 账号必须返回供应商自己的模型清单，而不是 Claude
+		// 默认模型——后者会让映射编辑器把目标模型引向 claude-* 名字。
+		// 优先返回 model_mapping 的 keys（用户已显式声明可用模型）；
+		// 没有映射时回落到该供应商的内置默认列表（Volcengine/MiMo 可能为空）。
+		provider := string(service.ResolveCodingPlanProvider(account))
+		defaults := codingPlanUpstreamModels(codingplan.DefaultModelsForProvider(provider))
+		mapping := account.GetModelMapping()
+		if len(mapping) == 0 {
+			response.Success(c, defaults)
+			return
+		}
+		defaultsByID := make(map[string]codingplan.Model, len(defaults))
+		for _, m := range defaults {
+			defaultsByID[m.ID] = m
+		}
+		models := make([]codingplan.Model, 0, len(mapping))
+		for requestedModel, upstreamModel := range mapping {
+			if dm, ok := defaultsByID[requestedModel]; ok {
+				dm.RequestModel = requestedModel
+				dm.UpstreamModel = upstreamModel
+				dm.ModelRole = "request"
+				models = append(models, dm)
+				continue
+			}
+			models = append(models, codingplan.Model{
+				ID:            requestedModel,
+				Type:          "model",
+				DisplayName:   fmt.Sprintf("%s -> %s", requestedModel, upstreamModel),
+				RequestModel:  requestedModel,
+				UpstreamModel: upstreamModel,
+				ModelRole:     "request",
+			})
+		}
+		response.Success(c, models)
+		return
+	}
+
 	// Handle Claude/Anthropic accounts
 	// For OAuth and Setup-Token accounts: return default models
 	if account.IsOAuth() {
@@ -2102,6 +2175,16 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 	}
 
 	response.Success(c, models)
+}
+
+func codingPlanUpstreamModels(models []codingplan.Model) []codingplan.Model {
+	out := make([]codingplan.Model, len(models))
+	for i, model := range models {
+		out[i] = model
+		out[i].UpstreamModel = model.ID
+		out[i].ModelRole = "upstream"
+	}
+	return out
 }
 
 // SyncUpstreamModels handles syncing live supported models from an account's upstream.
@@ -2408,8 +2491,64 @@ func (h *AccountHandler) GetAntigravityDefaultModelMapping(c *gin.Context) {
 	response.Success(c, domain.DefaultAntigravityModelMapping)
 }
 
-// sanitizeExtraBaseRPM 对 extra map 中的 base_rpm 值进行范围校验和归一化。
-// 负值归零，超过 10000 截断为 10000。extra 为 nil 或不含 base_rpm 时无操作。
+// validateCodingPlanProvider 校验 Coding Plan 供应商账号的平台/类型/供应商一致性。
+//
+// 规则（与前端 Coding Plan 入口对齐，且不再让国产账号伪装成 OpenAI 平台）：
+//   - extra.coding_plan_provider 为空时不做约束。
+//   - 设置了 coding_plan_provider 时，平台必须是国产 Coding Plan 平台
+//     （kimi / zhipu / minimax / volcengine / mimo），且类型必须是
+//     apikey 或 upstream（上游透传）。
+//   - 平台与 extra.coding_plan_provider 必须一致，禁止 platform=kimi
+//     却把 provider 写成 zhipu 这类不一致情况。
+//
+// 这样后端 /v1/responses 路由就可以统一以 group/account platform 判断是否进入
+// CodingPlanResponses，前端无需再以 OpenAI 平台伪装国产 Coding Plan。
+func validateCodingPlanProvider(platform, typ string, credentials, extra map[string]any) error {
+	platform = strings.ToLower(strings.TrimSpace(platform))
+	typ = strings.ToLower(strings.TrimSpace(typ))
+	if provider := service.DetectCodingPlanProviderFromBaseURL(credentialString(credentials, "base_url")); provider != "" && platform == service.PlatformOpenAI && (typ == "" || typ == service.AccountTypeAPIKey || typ == service.AccountTypeUpstream) {
+		return fmt.Errorf("base_url belongs to %s Coding Plan; use platform=%s instead of platform=openai", provider, provider)
+	}
+	if extra == nil {
+		return nil
+	}
+	rawProvider, ok := extra["coding_plan_provider"].(string)
+	if !ok {
+		return nil
+	}
+	provider := strings.ToLower(strings.TrimSpace(rawProvider))
+	if provider == "" {
+		return nil
+	}
+	// 1. provider 必须是已支持的国产 Coding Plan 供应商
+	if !service.IsCodingPlanPlatform(provider) {
+		return fmt.Errorf("unsupported coding_plan_provider %q (allowed: kimi, zhipu, minimax, volcengine, mimo)", rawProvider)
+	}
+	// 2. 平台必须是同一国产 Coding Plan 平台
+	if !service.IsCodingPlanPlatform(platform) {
+		return fmt.Errorf("coding plan accounts must use one of the domestic platforms (kimi/zhipu/minimax/volcengine/mimo); got platform=%q", platform)
+	}
+	if platform != provider {
+		return fmt.Errorf("coding_plan_provider %q does not match platform %q; they must be the same", provider, platform)
+	}
+	// 3. 类型必须是 apikey 或 upstream（上游透传 = base_url + api_key）
+	if typ != service.AccountTypeAPIKey && typ != service.AccountTypeUpstream {
+		return fmt.Errorf("coding plan accounts must use 'apikey' or 'upstream' type; got type=%q", typ)
+	}
+	return nil
+}
+
+func credentialString(credentials map[string]any, key string) string {
+	if credentials == nil {
+		return ""
+	}
+	raw, ok := credentials[key]
+	if !ok || raw == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(raw))
+}
+
 func sanitizeExtraBaseRPM(extra map[string]any) {
 	if extra == nil {
 		return

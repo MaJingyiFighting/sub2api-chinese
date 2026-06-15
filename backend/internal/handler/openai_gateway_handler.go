@@ -324,8 +324,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			reqModel,
 			failedAccountIDs,
 			service.OpenAIUpstreamTransportAny,
-			service.OpenAIEndpointCapabilityChatCompletions,
+			service.OpenAIEndpointCapabilityResponses,
 			requireCompact,
+			string(service.QuotaPlatform(c.Request.Context(), apiKey)),
 		)
 		if err != nil {
 			reqLog.Warn("openai.account_select_failed",
@@ -737,6 +738,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			service.OpenAIUpstreamTransportAny,
 			service.OpenAIEndpointCapabilityChatCompletions,
 			false,
+			string(service.QuotaPlatform(c.Request.Context(), apiKey)),
 		)
 		if err != nil {
 			reqLog.Warn("openai_messages.account_select_failed",
@@ -1338,6 +1340,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			service.OpenAIUpstreamTransportResponsesWebsocketV2,
 			service.OpenAIEndpointCapabilityChatCompletions,
 			false,
+			string(service.QuotaPlatform(c.Request.Context(), apiKey)),
 		)
 		if err != nil {
 			reqLog.Warn("openai.websocket_account_select_failed",
