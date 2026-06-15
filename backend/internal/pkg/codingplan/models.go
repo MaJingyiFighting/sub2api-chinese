@@ -58,9 +58,8 @@ var ZhipuDefaultModels = []Model{
 // api.minimaxi.com / api.minimax.io.
 var MiniMaxDefaultModels = []Model{
 	{ID: "MiniMax-M3", Type: "model", DisplayName: "MiniMax-M3"},
-	{ID: "MiniMax-Text-01", Type: "model", DisplayName: "MiniMax-Text-01"},
-	{ID: "abab6.5s-chat", Type: "model", DisplayName: "abab6.5s-chat"},
-	{ID: "abab6.5-chat", Type: "model", DisplayName: "abab6.5-chat"},
+	{ID: "MiniMax-M2.7", Type: "model", DisplayName: "MiniMax-M2.7"},
+	{ID: "MiniMax-M2.7-highspeed", Type: "model", DisplayName: "MiniMax-M2.7-highspeed"},
 }
 
 // VolcengineDefaultModels are the Ark Doubao models commonly used as the
