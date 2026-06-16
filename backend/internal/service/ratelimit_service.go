@@ -348,6 +348,18 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			s.handleCustomErrorCode(ctx, account, statusCode, msg)
 			shouldDisable = true
 		} else if statusCode >= 500 {
+			if IsPureKeyDomesticPlatform(account.Platform) {
+				until := time.Now().Add(time.Minute)
+				reason := fmt.Sprintf("%s temporary upstream error (%d)", account.Platform, statusCode)
+				s.notifyAccountSchedulingBlocked(account, until, "server_error")
+				if s.accountRepo != nil {
+					if err := s.accountRepo.SetTempUnschedulable(ctx, account.ID, until, reason); err != nil {
+						slog.Warn("pure_key_5xx_set_temp_unschedulable_failed", "account_id", account.ID, "error", err)
+					}
+				}
+				shouldDisable = true
+				break
+			}
 			// 未启用自定义错误码时：仅记录5xx错误
 			slog.Warn("account_upstream_error", "account_id", account.ID, "status_code", statusCode)
 			shouldDisable = false

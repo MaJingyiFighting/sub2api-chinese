@@ -8,7 +8,16 @@ import {
 
 describe('isDomesticCodingPlanPlatform', () => {
   it('recognizes the five domestic providers', () => {
-    for (const p of ['kimi', 'zhipu', 'minimax', 'volcengine', 'mimo']) {
+    for (const p of [
+      'kimi',
+      'zhipu',
+      'minimax',
+      'volcengine',
+      'mimo',
+      'deepseek',
+      'custom_openai_compatible',
+      'custom_anthropic_compatible'
+    ]) {
       expect(isDomesticCodingPlanPlatform(p)).toBe(true)
     }
   })
@@ -17,8 +26,8 @@ describe('isDomesticCodingPlanPlatform', () => {
       expect(isDomesticCodingPlanPlatform(p)).toBe(false)
     }
   })
-  it('exposes exactly five providers', () => {
-    expect(DOMESTIC_PROVIDERS).toHaveLength(5)
+  it('exposes coding plan and pure key providers', () => {
+    expect(DOMESTIC_PROVIDERS).toHaveLength(8)
   })
 })
 
@@ -43,22 +52,30 @@ describe('resolveDomesticEndpoints', () => {
     expect(e.anthropicBaseUrl).toBe('https://api.moonshot.cn/anthropic')
   })
 
-  it('minimax requires input and reuses the same base for anthropic with a note', () => {
+  it('minimax requires explicit anthropic base url before creating anthropic variant', () => {
     const empty = resolveDomesticEndpoints('minimax', '')
     expect(empty.chatBaseUrl).toBe('')
     expect(empty.anthropicSupported).toBe(false)
 
     const withUrl = resolveDomesticEndpoints('minimax', 'https://api.minimaxi.com/v1')
     expect(withUrl.chatBaseUrl).toBe('https://api.minimaxi.com/v1')
-    expect(withUrl.anthropicBaseUrl).toBe('https://api.minimaxi.com/v1')
-    expect(withUrl.anthropicSupported).toBe(true)
+    expect(withUrl.anthropicBaseUrl).toBeNull()
+    expect(withUrl.anthropicSupported).toBe(false)
     expect(withUrl.noteKey).not.toBe('')
+
+    const explicit = resolveDomesticEndpoints(
+      'minimax',
+      'https://api.minimaxi.com/v1',
+      'https://api.minimaxi.com/anthropic'
+    )
+    expect(explicit.anthropicBaseUrl).toBe('https://api.minimaxi.com/anthropic')
+    expect(explicit.anthropicSupported).toBe(true)
   })
 
-  it('mimo behaves like minimax (input required, same base, note)', () => {
+  it('mimo requires explicit anthropic base url', () => {
     const withUrl = resolveDomesticEndpoints('mimo', 'https://mimo.example.com/v1')
     expect(withUrl.chatBaseUrl).toBe('https://mimo.example.com/v1')
-    expect(withUrl.anthropicSupported).toBe(true)
+    expect(withUrl.anthropicSupported).toBe(false)
     expect(withUrl.noteKey).not.toBe('')
   })
 
@@ -68,6 +85,19 @@ describe('resolveDomesticEndpoints', () => {
     expect(e.anthropicBaseUrl).toBeNull()
     expect(e.anthropicSupported).toBe(false)
     expect(e.noteKey).not.toBe('')
+  })
+
+  it('deepseek is chat-only with a default base url', () => {
+    const e = resolveDomesticEndpoints('deepseek', '')
+    expect(e.chatBaseUrl).toBe('https://api.deepseek.com')
+    expect(e.anthropicSupported).toBe(false)
+  })
+
+  it('custom anthropic compatible is anthropic-only', () => {
+    const e = resolveDomesticEndpoints('custom_anthropic_compatible', 'https://anthropic.example.com')
+    expect(e.chatBaseUrl).toBe('')
+    expect(e.anthropicBaseUrl).toBe('https://anthropic.example.com')
+    expect(e.anthropicSupported).toBe(true)
   })
 })
 
@@ -127,7 +157,7 @@ describe('buildDomesticAccountPayloads', () => {
     expect(payloads[0].extra?.coding_plan_probe_status).toBe('experimental')
   })
 
-  it('minimax without a base url only creates the Chat/Codex account', () => {
+  it('minimax without a base url creates no payloads because the UI must require it', () => {
     const { payloads, anthropicCreated } = buildDomesticAccountPayloads({
       provider: 'minimax',
       name: 'MM',
@@ -135,7 +165,48 @@ describe('buildDomesticAccountPayloads', () => {
       inputBaseUrl: ''
     })
     expect(anthropicCreated).toBe(false)
+    expect(payloads).toHaveLength(0)
+  })
+
+  it('minimax with an explicit anthropic base url creates both variants', () => {
+    const { payloads, anthropicCreated } = buildDomesticAccountPayloads({
+      provider: 'minimax',
+      name: 'MM',
+      apiKey: 'sk-mm',
+      inputBaseUrl: 'https://api.minimaxi.com/v1',
+      inputAnthropicBaseUrl: 'https://api.minimaxi.com/anthropic'
+    })
+    expect(anthropicCreated).toBe(true)
+    expect(payloads).toHaveLength(2)
+    expect(payloads[1].credentials.base_url).toBe('https://api.minimaxi.com/anthropic')
+  })
+
+  it('deepseek creates a pure key Chat/Codex account without coding_plan_provider', () => {
+    const { payloads, anthropicCreated } = buildDomesticAccountPayloads({
+      provider: 'deepseek',
+      name: 'DS',
+      apiKey: 'sk-ds',
+      inputBaseUrl: ''
+    })
+    expect(anthropicCreated).toBe(false)
     expect(payloads).toHaveLength(1)
+    expect(payloads[0].platform).toBe('deepseek')
+    expect(payloads[0].credentials.base_url).toBe('https://api.deepseek.com')
+    expect(payloads[0].extra?.coding_plan_provider).toBeUndefined()
+  })
+
+  it('custom anthropic compatible creates only the Claude Code account', () => {
+    const { payloads, anthropicCreated } = buildDomesticAccountPayloads({
+      provider: 'custom_anthropic_compatible',
+      name: 'CA',
+      apiKey: 'sk-ca',
+      inputBaseUrl: 'https://anthropic.example.com'
+    })
+    expect(anthropicCreated).toBe(true)
+    expect(payloads).toHaveLength(1)
+    expect(payloads[0].name).toBe('CA - Claude Code')
+    expect(payloads[0].platform).toBe('custom_anthropic_compatible')
+    expect(payloads[0].extra?.coding_plan_provider).toBeUndefined()
   })
 
   it('splits selected groups: chat keeps provider groups, anthropic also gets anthropic groups', () => {

@@ -13,9 +13,26 @@ import type { AccountPlatform, CreateAccountRequest } from '@/types'
  * The user never picks an "API format" and never enters a separate quota URL.
  */
 
-export type DomesticProvider = 'kimi' | 'zhipu' | 'minimax' | 'volcengine' | 'mimo'
+export type DomesticProvider =
+  | 'kimi'
+  | 'zhipu'
+  | 'minimax'
+  | 'volcengine'
+  | 'mimo'
+  | 'deepseek'
+  | 'custom_openai_compatible'
+  | 'custom_anthropic_compatible'
 
-export const DOMESTIC_PROVIDERS: DomesticProvider[] = ['kimi', 'zhipu', 'minimax', 'volcengine', 'mimo']
+export const DOMESTIC_PROVIDERS: DomesticProvider[] = [
+  'kimi',
+  'zhipu',
+  'minimax',
+  'volcengine',
+  'mimo',
+  'deepseek',
+  'custom_openai_compatible',
+  'custom_anthropic_compatible'
+]
 
 export interface DomesticProviderTab {
   id: DomesticProvider
@@ -28,7 +45,10 @@ export const DOMESTIC_PROVIDER_TABS: DomesticProviderTab[] = [
   { id: 'zhipu', label: 'Zhipu', activeColor: 'text-indigo-600 dark:text-indigo-400' },
   { id: 'minimax', label: 'MiniMax', activeColor: 'text-rose-600 dark:text-rose-400' },
   { id: 'volcengine', label: 'Volcengine', activeColor: 'text-blue-500 dark:text-blue-300' },
-  { id: 'mimo', label: 'MiMo', activeColor: 'text-teal-600 dark:text-teal-400' }
+  { id: 'mimo', label: 'MiMo', activeColor: 'text-teal-600 dark:text-teal-400' },
+  { id: 'deepseek', label: 'DeepSeek', activeColor: 'text-sky-600 dark:text-sky-400' },
+  { id: 'custom_openai_compatible', label: 'OpenAI-compatible', activeColor: 'text-emerald-600 dark:text-emerald-400' },
+  { id: 'custom_anthropic_compatible', label: 'Anthropic-compatible', activeColor: 'text-orange-600 dark:text-orange-400' }
 ]
 
 export function isDomesticCodingPlanPlatform(platform: string): platform is DomesticProvider {
@@ -61,13 +81,18 @@ function trimTrailingSlash(url: string): string {
  *   - kimi:  chat https://api.moonshot.cn/v1            anthropic https://api.moonshot.cn/anthropic
  *   - zhipu: chat https://open.bigmodel.cn/api/coding/paas/v4  anthropic https://open.bigmodel.cn/api/anthropic
  *   - minimax/mimo: base URL is required; the Anthropic endpoint can't be
- *     reliably derived, so it reuses the same base and surfaces a note to edit
- *     the advanced address later if it differs.
+ *     reliably derived, so an Anthropic variant is created only when the user
+ *     explicitly fills the Anthropic base URL.
  *   - volcengine: chat https://ark.cn-beijing.volces.com/api/v3; Ark exposes no
  *     Anthropic Messages endpoint, so only the Chat/Codex account is created.
  */
-export function resolveDomesticEndpoints(provider: string, inputBaseUrl: string): DomesticEndpoints {
+export function resolveDomesticEndpoints(
+  provider: string,
+  inputBaseUrl: string,
+  inputAnthropicBaseUrl = ''
+): DomesticEndpoints {
   const input = trimTrailingSlash(inputBaseUrl || '')
+  const anthropicInput = trimTrailingSlash(inputAnthropicBaseUrl || '')
   switch (provider) {
     case 'kimi':
       return {
@@ -86,16 +111,16 @@ export function resolveDomesticEndpoints(provider: string, inputBaseUrl: string)
     case 'minimax':
       return {
         chatBaseUrl: input,
-        anthropicBaseUrl: input || null,
-        anthropicSupported: input !== '',
-        noteKey: 'admin.accounts.codingPlan.anthropicSameBaseNote'
+        anthropicBaseUrl: anthropicInput || null,
+        anthropicSupported: anthropicInput !== '',
+        noteKey: 'admin.accounts.codingPlan.anthropicExplicitOnlyNote'
       }
     case 'mimo':
       return {
         chatBaseUrl: input,
-        anthropicBaseUrl: input || null,
-        anthropicSupported: input !== '',
-        noteKey: 'admin.accounts.codingPlan.anthropicSameBaseNote'
+        anthropicBaseUrl: anthropicInput || null,
+        anthropicSupported: anthropicInput !== '',
+        noteKey: 'admin.accounts.codingPlan.anthropicExplicitOnlyNote'
       }
     case 'volcengine':
       return {
@@ -103,6 +128,27 @@ export function resolveDomesticEndpoints(provider: string, inputBaseUrl: string)
         anthropicBaseUrl: null,
         anthropicSupported: false,
         noteKey: 'admin.accounts.codingPlan.chatOnlyNote'
+      }
+    case 'deepseek':
+      return {
+        chatBaseUrl: input || 'https://api.deepseek.com',
+        anthropicBaseUrl: null,
+        anthropicSupported: false,
+        noteKey: 'admin.accounts.codingPlan.chatOnlyNote'
+      }
+    case 'custom_openai_compatible':
+      return {
+        chatBaseUrl: input,
+        anthropicBaseUrl: null,
+        anthropicSupported: false,
+        noteKey: 'admin.accounts.codingPlan.chatOnlyNote'
+      }
+    case 'custom_anthropic_compatible':
+      return {
+        chatBaseUrl: '',
+        anthropicBaseUrl: input || null,
+        anthropicSupported: input !== '',
+        noteKey: 'admin.accounts.codingPlan.anthropicOnlyNote'
       }
     default:
       return {
@@ -125,6 +171,7 @@ export interface BuildDomesticPayloadsOptions {
   notes?: string | null
   apiKey: string
   inputBaseUrl: string
+  inputAnthropicBaseUrl?: string
   modelMapping?: Record<string, string> | null
   /** All selectable groups (for splitting by platform). */
   groups?: DomesticGroupInfo[]
@@ -147,8 +194,12 @@ export interface BuildDomesticPayloadsResult {
   endpoints: DomesticEndpoints
 }
 
-function probeStatusFor(provider: DomesticProvider): 'supported' | 'experimental' {
-  return provider === 'volcengine' || provider === 'mimo' ? 'experimental' : 'supported'
+function probeStatusFor(provider: DomesticProvider): 'supported' | 'experimental' | 'unsupported' {
+  if (provider === 'volcengine' || provider === 'mimo') return 'experimental'
+  if (provider === 'deepseek' || provider === 'custom_openai_compatible' || provider === 'custom_anthropic_compatible') {
+    return 'unsupported'
+  }
+  return 'supported'
 }
 
 /**
@@ -178,6 +229,9 @@ function splitGroupIds(
       anthropicGroupIds.push(id)
     } else if (platform === 'anthropic') {
       anthropicGroupIds.push(id)
+    } else if (platform === 'domestic') {
+      chatGroupIds.push(id)
+      anthropicGroupIds.push(id)
     }
     // Any other platform (e.g. openai) is dropped: a domestic account can never
     // join it.
@@ -193,7 +247,7 @@ function splitGroupIds(
 export function buildDomesticAccountPayloads(
   opts: BuildDomesticPayloadsOptions
 ): BuildDomesticPayloadsResult {
-  const endpoints = resolveDomesticEndpoints(opts.provider, opts.inputBaseUrl)
+  const endpoints = resolveDomesticEndpoints(opts.provider, opts.inputBaseUrl, opts.inputAnthropicBaseUrl)
   const probeStatus = probeStatusFor(opts.provider)
   const { chatGroupIds, anthropicGroupIds } = splitGroupIds(
     opts.provider,
@@ -214,38 +268,42 @@ export function buildDomesticAccountPayloads(
   const modelMapping =
     opts.modelMapping && Object.keys(opts.modelMapping).length > 0 ? opts.modelMapping : undefined
 
-  const chatCredentials: Record<string, unknown> = {
-    ...(opts.baseCredentials ?? {}),
-    base_url: endpoints.chatBaseUrl,
-    api_key: opts.apiKey,
-    wire_api: 'openai_chat',
-    api_format: 'chat_completions',
-    chat_completions_route_enabled: true,
-    responses_route_enabled: true
-  }
-  if (modelMapping) {
-    chatCredentials.model_mapping = modelMapping
-  }
-
-  const chatPayload: CreateAccountRequest = {
-    name: `${opts.name} - Chat/Codex`,
-    notes: opts.notes ?? null,
-    platform: opts.provider as AccountPlatform,
-    type: 'apikey',
-    credentials: chatCredentials,
-    extra: {
-      ...(opts.baseExtra ?? {}),
-      coding_plan_provider: opts.provider,
-      coding_plan_variant: 'chat',
-      responses_support: 'via_chat_completions',
-      coding_plan_probe_status: probeStatus
-    },
-    group_ids: chatGroupIds,
-    ...sharedFields
-  }
-
-  const payloads: CreateAccountRequest[] = [chatPayload]
+  const payloads: CreateAccountRequest[] = []
   let anthropicCreated = false
+
+  if (endpoints.chatBaseUrl) {
+    const chatCredentials: Record<string, unknown> = {
+      ...(opts.baseCredentials ?? {}),
+      base_url: endpoints.chatBaseUrl,
+      api_key: opts.apiKey,
+      wire_api: 'openai_chat',
+      api_format: 'chat_completions',
+      chat_completions_route_enabled: true,
+      responses_route_enabled: true
+    }
+    if (modelMapping) {
+      chatCredentials.model_mapping = modelMapping
+    }
+
+    payloads.push({
+      name: `${opts.name} - Chat/Codex`,
+      notes: opts.notes ?? null,
+      platform: opts.provider as AccountPlatform,
+      type: 'apikey',
+      credentials: chatCredentials,
+      extra: {
+        ...(opts.baseExtra ?? {}),
+        ...(isDomesticCodingPlanPlatform(opts.provider) && !opts.provider.startsWith('custom_') && opts.provider !== 'deepseek'
+          ? { coding_plan_provider: opts.provider }
+          : {}),
+        coding_plan_variant: 'chat',
+        responses_support: 'via_chat_completions',
+        coding_plan_probe_status: probeStatus
+      },
+      group_ids: chatGroupIds,
+      ...sharedFields
+    })
+  }
 
   if (endpoints.anthropicSupported && endpoints.anthropicBaseUrl) {
     anthropicCreated = true
@@ -265,7 +323,9 @@ export function buildDomesticAccountPayloads(
       type: 'apikey',
       credentials: anthropicCredentials,
       extra: {
-        coding_plan_provider: opts.provider,
+        ...(isDomesticCodingPlanPlatform(opts.provider) && !opts.provider.startsWith('custom_') && opts.provider !== 'deepseek'
+          ? { coding_plan_provider: opts.provider }
+          : {}),
         coding_plan_variant: 'anthropic',
         responses_support: 'via_anthropic_messages',
         messages_support: 'anthropic_messages',

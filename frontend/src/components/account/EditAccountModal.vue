@@ -114,13 +114,14 @@
           <p class="input-hint">{{ t('admin.accounts.leaveEmptyToKeep') }}</p>
         </div>
 
-        <!-- Quota Probe Base URL (for domestic platforms) -->
-        <div v-if="isDomesticCodingPlanPlatform(account.platform)">
+        <!-- Experimental quota probe URL, shown read-only for legacy/debug accounts. -->
+        <div v-if="isDomesticCodingPlanPlatform(account.platform) && editQuotaBaseUrl">
           <label class="input-label">{{ t('admin.accounts.codingPlan.quotaBaseUrl') }}</label>
           <input
-            v-model="editQuotaBaseUrl"
+            :value="editQuotaBaseUrl"
             type="text"
-            class="input"
+            readonly
+            class="input bg-gray-50 text-gray-500 dark:bg-dark-700 dark:text-dark-300"
             :placeholder="t('admin.accounts.codingPlan.quotaBaseUrlPlaceholder')"
           />
           <p class="input-hint">{{ t('admin.accounts.codingPlan.quotaBaseUrlHint') }}</p>
@@ -4355,14 +4356,6 @@ const handleSubmit = async () => {
         newExtra.coding_plan_probe_status = codingPlanProbeStatus.value
       } else {
         delete newExtra.coding_plan_probe_status
-      }
-
-      if (isDomesticCodingPlanPlatform(props.account.platform)) {
-        if (editQuotaBaseUrl.value.trim()) {
-          newExtra.quota_base_url = editQuotaBaseUrl.value.trim()
-        } else {
-          delete newExtra.quota_base_url
-        }
       }
 
       delete newExtra.volcengine_quota_probe_url

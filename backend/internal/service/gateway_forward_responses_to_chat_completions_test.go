@@ -290,3 +290,59 @@ func TestForwardCodexResponsesViaChatCompletions_BufferedKeepsThinkingTag(t *tes
 	outText := gjson.GetBytes(rec.Body.Bytes(), `output.#(type=="message").content.0.text`).String()
 	require.Equal(t, "<thinking>kept</thinking> done", outText)
 }
+
+func TestForwardCodexResponsesViaChatCompletions_E2EFailoverMappingThinkUsage(t *testing.T) {
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		{
+			StatusCode: http.StatusTooManyRequests,
+			Header:     http.Header{"Content-Type": []string{"application/json"}, "Retry-After": []string{"60"}},
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"rate limited"}}`)),
+		},
+		newCodingPlanSSE(http.StatusOK, strings.Join([]string{
+			`data: {"id":"chatcmpl_ok","object":"chat.completion.chunk","created":1,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"content":"<think>hidden</think>visible answer"}}]}`,
+			`data: {"id":"chatcmpl_ok","object":"chat.completion.chunk","created":1,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}}`,
+			`data: [DONE]`,
+			``,
+		}, "\n")),
+	}}
+	svc := &GatewayService{httpUpstream: upstream}
+	body := []byte(`{"model":"deepseek-reasoner","stream":false,"input":"hi"}`)
+	firstAccount := &Account{
+		ID:       101,
+		Platform: PlatformDeepSeek,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "sk-first",
+			"base_url": "https://api.deepseek.com/v1",
+		},
+	}
+	secondAccount := &Account{
+		ID:       102,
+		Platform: PlatformDeepSeek,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "sk-second",
+			"base_url": "https://api.deepseek.com/v1",
+		},
+	}
+
+	c1, _ := newCodingPlanResponsesTestContext(body)
+	result, err := svc.ForwardCodexResponsesViaChatCompletions(context.Background(), c1, firstAccount, body, nil)
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
+
+	c2, rec2 := newCodingPlanResponsesTestContext(body)
+	result, err = svc.ForwardCodexResponsesViaChatCompletions(context.Background(), c2, secondAccount, body, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, upstream.bodies, 2)
+	require.Equal(t, "deepseek-reasoner", gjson.GetBytes(upstream.bodies[1], "model").String())
+	require.Equal(t, "visible answer", gjson.GetBytes(rec2.Body.Bytes(), `output.#(type=="message").content.0.text`).String())
+	require.NotContains(t, rec2.Body.String(), "<think>")
+	require.NotContains(t, gjson.GetBytes(rec2.Body.Bytes(), `output.#(type=="message").content.0.text`).String(), "hidden")
+	require.Equal(t, 11, result.Usage.InputTokens)
+	require.Equal(t, 7, result.Usage.OutputTokens)
+	require.Equal(t, "deepseek-reasoner", result.UpstreamModel)
+}

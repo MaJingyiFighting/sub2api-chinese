@@ -39,6 +39,15 @@
   <svg v-else-if="platform === 'mimo'" :class="sizeClass" viewBox="0 0 24 24" fill="currentColor">
     <text x="50%" y="50%" font-size="16" font-weight="bold" text-anchor="middle" dominant-baseline="central">M</text>
   </svg>
+  <svg v-else-if="platform === 'deepseek'" :class="sizeClass" viewBox="0 0 24 24" fill="currentColor">
+    <text x="50%" y="50%" font-size="16" font-weight="bold" text-anchor="middle" dominant-baseline="central">D</text>
+  </svg>
+  <svg v-else-if="platform === 'domestic'" :class="sizeClass" viewBox="0 0 24 24" fill="currentColor">
+    <text x="50%" y="50%" font-size="16" font-weight="bold" text-anchor="middle" dominant-baseline="central">CN</text>
+  </svg>
+  <svg v-else-if="platform === 'custom_openai_compatible' || platform === 'custom_anthropic_compatible'" :class="sizeClass" viewBox="0 0 24 24" fill="currentColor">
+    <text x="50%" y="50%" font-size="14" font-weight="bold" text-anchor="middle" dominant-baseline="central">C</text>
+  </svg>
   <!-- Fallback: generic platform icon -->
   <svg v-else :class="sizeClass" fill="currentColor" viewBox="0 0 24 24">
     <path

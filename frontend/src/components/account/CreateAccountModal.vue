@@ -993,6 +993,16 @@
           />
           <p class="input-hint">{{ baseUrlHint }}</p>
         </div>
+        <div v-if="form.platform === 'minimax' || form.platform === 'mimo'">
+          <label class="input-label">{{ t('admin.accounts.codingPlan.anthropicBaseUrl') }}</label>
+          <input
+            v-model="domesticAnthropicBaseUrl"
+            type="text"
+            class="input"
+            :placeholder="t('admin.accounts.codingPlan.anthropicBaseUrlPlaceholder')"
+          />
+          <p class="input-hint">{{ t('admin.accounts.codingPlan.anthropicBaseUrlHint') }}</p>
+        </div>
         <div>
           <label class="input-label">{{ t('admin.accounts.apiKeyRequired') }}</label>
           <input
@@ -3308,14 +3318,19 @@ const baseUrlHint = computed(() => {
 // Resolved endpoints preview for the currently selected domestic provider,
 // driving the base-url placeholder and the dual-account info note.
 const domesticEndpointPreview = computed(() =>
-  resolveDomesticEndpoints(form.platform, apiKeyBaseUrl.value)
+  resolveDomesticEndpoints(form.platform, apiKeyBaseUrl.value, domesticAnthropicBaseUrl.value)
 )
 
 const baseUrlPlaceholder = computed(() => {
   if (form.platform === 'openai') return 'https://api.openai.com'
   if (form.platform === 'gemini') return 'https://generativelanguage.googleapis.com'
   if (isDomesticCodingPlanPlatform(form.platform)) {
-    if (form.platform === 'minimax' || form.platform === 'mimo') {
+    if (
+      form.platform === 'minimax' ||
+      form.platform === 'mimo' ||
+      form.platform === 'custom_openai_compatible' ||
+      form.platform === 'custom_anthropic_compatible'
+    ) {
       return t('admin.accounts.codingPlan.baseUrlRequiredPlaceholder')
     }
     return domesticEndpointPreview.value.chatBaseUrl
@@ -3401,6 +3416,7 @@ const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_acco
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
 const apiKeyValue = ref('')
+const domesticAnthropicBaseUrl = ref('')
 const volcenginePlanType = ref<'coding_plan' | 'agent_plan'>('coding_plan')
 const volcengineRegion = ref('cn-beijing')
 const volcengineAccessKeyId = ref('')
@@ -3895,9 +3911,12 @@ watch(
         apiKeyBaseUrl.value = 'https://open.bigmodel.cn/api/coding/paas/v4'
       } else if (newPlatform === 'volcengine') {
         apiKeyBaseUrl.value = 'https://ark.cn-beijing.volces.com/api/v3'
+      } else if (newPlatform === 'deepseek') {
+        apiKeyBaseUrl.value = 'https://api.deepseek.com'
       } else {
         apiKeyBaseUrl.value = ''
       }
+      domesticAnthropicBaseUrl.value = ''
     } else {
       apiKeyBaseUrl.value =
         (newPlatform === 'openai')
@@ -4321,6 +4340,7 @@ const resetForm = () => {
   addMethod.value = 'oauth'
   apiKeyBaseUrl.value = 'https://api.anthropic.com'
   apiKeyValue.value = ''
+  domesticAnthropicBaseUrl.value = ''
   volcenginePlanType.value = 'coding_plan'
   volcengineRegion.value = 'cn-beijing'
   volcengineAccessKeyId.value = ''
@@ -4615,8 +4635,7 @@ const createDomesticCodingPlanAccounts = async () => {
   // Provider-specific extra (Volcengine OpenAPI quota fields).
   const baseExtra: Record<string, unknown> = {}
   if (provider === 'volcengine') {
-    baseExtra.coding_plan_probe_status =
-      volcengineAccessKeyId.value.trim() && volcengineSecretAccessKey.value.trim() ? 'supported' : 'experimental'
+    baseExtra.coding_plan_probe_status = 'experimental'
     baseExtra.volcengine_plan_type = volcenginePlanType.value
     baseExtra.volcengine_region = volcengineRegion.value.trim() || 'cn-beijing'
     baseExtra.volcengine_service = 'ark'
@@ -4637,6 +4656,7 @@ const createDomesticCodingPlanAccounts = async () => {
     notes: form.notes,
     apiKey: apiKeyValue.value.trim(),
     inputBaseUrl: apiKeyBaseUrl.value.trim(),
+    inputAnthropicBaseUrl: domesticAnthropicBaseUrl.value.trim(),
     modelMapping,
     groups: props.groups.map((g) => ({ id: g.id, platform: g.platform })),
     selectedGroupIds: form.group_ids,
@@ -4823,7 +4843,13 @@ const handleSubmit = async () => {
   // Anthropic Messages variant (Claude Code /v1/messages). The key is entered
   // once; there is no API-format choice and no separate quota URL.
   if (isDomesticCodingPlanPlatform(form.platform)) {
-    if ((form.platform === 'minimax' || form.platform === 'mimo') && !apiKeyBaseUrl.value.trim()) {
+    if (
+      (form.platform === 'minimax' ||
+        form.platform === 'mimo' ||
+        form.platform === 'custom_openai_compatible' ||
+        form.platform === 'custom_anthropic_compatible') &&
+      !apiKeyBaseUrl.value.trim()
+    ) {
       appStore.showError(t('admin.accounts.codingPlan.baseUrlRequired'))
       return
     }

@@ -71,10 +71,10 @@ type Account struct {
 type OpenAIEndpointCapability string
 
 const (
-	OpenAIEndpointCapabilityChatCompletions         OpenAIEndpointCapability = "chat_completions"
-	OpenAIEndpointCapabilityEmbeddings              OpenAIEndpointCapability = "embeddings"
-	OpenAIEndpointCapabilityResponses               OpenAIEndpointCapability = "responses"
-	OpenAIEndpointCapabilityCodexResponsesViaChat   OpenAIEndpointCapability = "codex_responses_via_chat"
+	OpenAIEndpointCapabilityChatCompletions       OpenAIEndpointCapability = "chat_completions"
+	OpenAIEndpointCapabilityEmbeddings            OpenAIEndpointCapability = "embeddings"
+	OpenAIEndpointCapabilityResponses             OpenAIEndpointCapability = "responses"
+	OpenAIEndpointCapabilityCodexResponsesViaChat OpenAIEndpointCapability = "codex_responses_via_chat"
 )
 
 const openAIEndpointCapabilitiesCredentialKey = "openai_capabilities"
@@ -1143,7 +1143,8 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 		return true
 	}
 	isDomestic := IsCodingPlanAccount(a)
-	if !a.IsOpenAI() && !isDomestic {
+	isOpenAICompatibleKey := a.Platform == PlatformDeepSeek || a.Platform == PlatformCustomOpenAICompatible
+	if !a.IsOpenAI() && !isDomestic && !isOpenAICompatibleKey {
 		return false
 	}
 	switch capability {
@@ -1154,7 +1155,7 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 		}
 	case OpenAIEndpointCapabilityCodexResponsesViaChat:
 		// Requires an API key account, doesn't work for OAuth as OAuth is directly Codex
-		if !a.IsOpenAI() || a.Type != AccountTypeAPIKey {
+		if a.Type != AccountTypeAPIKey || (!a.IsOpenAI() && !isDomestic && !isOpenAICompatibleKey) {
 			return false
 		}
 	default:

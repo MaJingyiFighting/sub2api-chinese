@@ -51,6 +51,30 @@ func TestRateLimitService_HandleUpstreamError_CodingPlan429TempUnschedulable(t *
 	require.Equal(t, 1, repo.lastExtra["coding_plan_rate_limit_streak"])
 }
 
+func TestRateLimitService_HandleUpstreamError_PlatformFallbackWithoutExtra(t *testing.T) {
+	repo := &rateLimitAccountRepoStub{}
+	svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	account := &Account{
+		ID:          11,
+		Platform:    string(CodingPlanProviderKimi),
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{
+			"api_key":  "sk-kimi",
+			"base_url": "https://proxy.example.com/v1",
+		},
+		Extra: map[string]any{},
+	}
+
+	shouldDisable := svc.HandleUpstreamError(context.Background(), account, 429,
+		http.Header{"Retry-After": []string{"30"}}, []byte(`{"error":"rate limited"}`))
+
+	require.True(t, shouldDisable)
+	require.Equal(t, 1, repo.tempCalls)
+	require.Equal(t, "kimi", repo.lastExtra["coding_plan_provider"])
+}
+
 // Task D2: a 401 from a domestic Coding Plan upstream disables the account
 // (auth invalid) via SetError, so it is no longer scheduled.
 func TestRateLimitService_HandleUpstreamError_CodingPlan401Disables(t *testing.T) {

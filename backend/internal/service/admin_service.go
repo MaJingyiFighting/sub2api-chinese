@@ -1781,6 +1781,26 @@ func defaultModelsListCandidateIDs(platform string) []string {
 			ids = append(ids, model.ID)
 		}
 		return ids
+	case PlatformDomestic:
+		seen := map[string]struct{}{}
+		var ids []string
+		for _, provider := range []string{
+			string(CodingPlanProviderKimi),
+			string(CodingPlanProviderZhipu),
+			string(CodingPlanProviderMiniMax),
+			string(CodingPlanProviderVolcengine),
+			string(CodingPlanProviderMiMo),
+		} {
+			for _, model := range codingPlanModelIDs(codingplan.DefaultModelsForProvider(provider)) {
+				if _, ok := seen[model]; ok {
+					continue
+				}
+				seen[model] = struct{}{}
+				ids = append(ids, model)
+			}
+		}
+		ids = append(ids, "deepseek-chat", "deepseek-reasoner")
+		return ids
 	default:
 		if IsCodingPlanPlatform(platform) {
 			return codingPlanModelIDs(codingplan.DefaultModelsForProvider(platform))
@@ -3848,6 +3868,16 @@ func accountBindingPlatform(account *Account) string {
 	return strings.TrimSpace(account.Platform)
 }
 
+func accountCanUseDomesticAggregateGroup(account *Account, accountPlatform string) bool {
+	if account == nil {
+		return false
+	}
+	if IsCodingPlanPlatform(accountPlatform) || accountPlatform == PlatformDeepSeek || accountPlatform == PlatformCustomOpenAICompatible {
+		return true
+	}
+	return false
+}
+
 // isAccountGroupBindingCompatible decides whether an account may join a group.
 //
 // Domestic Coding Plan accounts are isolated to their own provider's groups
@@ -3858,8 +3888,18 @@ func accountBindingPlatform(account *Account) string {
 // OpenAI/ChatGPT (and Anthropic) groups so domestic models never enter the
 // OpenAI official account pool.
 func isAccountGroupBindingCompatible(account *Account, accountPlatform, groupPlatform string) bool {
+	groupPlatform = strings.TrimSpace(groupPlatform)
 	if IsCodingPlanAnthropicMessagesAccount(account) && strings.TrimSpace(groupPlatform) == PlatformAnthropic {
 		return true
+	}
+	if groupPlatform == PlatformDomestic && accountCanUseDomesticAggregateGroup(account, accountPlatform) {
+		return true
+	}
+	if accountPlatform == PlatformDeepSeek || accountPlatform == PlatformCustomOpenAICompatible {
+		return groupPlatform == accountPlatform || groupPlatform == PlatformDomestic
+	}
+	if accountPlatform == PlatformCustomAnthropicCompatible {
+		return groupPlatform == accountPlatform || groupPlatform == PlatformAnthropic
 	}
 	return isAccountGroupPlatformCompatible(accountPlatform, groupPlatform)
 }

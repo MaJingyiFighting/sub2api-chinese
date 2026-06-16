@@ -135,7 +135,7 @@ describe('CreateAccountModal domestic Coding Plan UI', () => {
     expect(text).toContain('domesticTab')
   })
 
-  it('reveals five domestic provider sub-tabs only after selecting the domestic entry', async () => {
+  it('reveals domestic provider and pure key sub-tabs only after selecting the domestic entry', async () => {
     const wrapper = mountModal()
     expect(domesticProviderButtons(wrapper)).toHaveLength(0)
 
@@ -144,13 +144,16 @@ describe('CreateAccountModal domestic Coding Plan UI', () => {
     await domesticTab!.trigger('click')
 
     const subTabs = domesticProviderButtons(wrapper)
-    expect(subTabs).toHaveLength(5)
+    expect(subTabs).toHaveLength(8)
     const labels = subTabs.map((b) => b.text()).join('|')
     expect(labels).toContain('Kimi')
     expect(labels).toContain('Zhipu')
     expect(labels).toContain('MiniMax')
     expect(labels).toContain('Volcengine')
     expect(labels).toContain('MiMo')
+    expect(labels).toContain('DeepSeek')
+    expect(labels).toContain('OpenAI-compatible')
+    expect(labels).toContain('Anthropic-compatible')
   })
 
   it('no longer renders the API format radio or the quota base URL field', async () => {

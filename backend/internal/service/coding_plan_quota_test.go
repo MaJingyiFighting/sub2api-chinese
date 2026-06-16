@@ -295,6 +295,17 @@ func TestCodingPlanProviderDetectionAndUnsupportedProbe(t *testing.T) {
 	require.Equal(t, CodingPlanProviderMiniMax, DetectCodingPlanProviderFromBaseURL("https://api.minimax.io/v1"))
 	require.Equal(t, CodingPlanProviderVolcengine, DetectCodingPlanProviderFromBaseURL("https://ark.cn-beijing.volces.com/api/v3"))
 	require.Equal(t, CodingPlanProviderMiMo, DetectCodingPlanProviderFromBaseURL("https://mimo.api.xiaomi.com/v1"))
+	require.Empty(t, DetectCodingPlanProviderFromBaseURL("https://www.mi.com/shop"))
+	require.Empty(t, DetectCodingPlanProviderFromBaseURL("https://openai-compatible.example.com/v1"))
+
+	require.Equal(t, CodingPlanProviderKimi, ResolveCodingPlanProvider(&Account{
+		Platform: string(CodingPlanProviderKimi),
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"base_url": "https://proxy.example.com/v1",
+		},
+		Extra: map[string]any{},
+	}))
 
 	account := &Account{
 		Platform: PlatformOpenAI,

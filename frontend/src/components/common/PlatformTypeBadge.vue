@@ -81,6 +81,10 @@ const platformLabel = computed(() => {
   if (props.platform === 'minimax') return 'MiniMax'
   if (props.platform === 'volcengine') return 'Volcengine'
   if (props.platform === 'mimo') return 'MiMo'
+  if (props.platform === 'domestic') return 'Domestic'
+  if (props.platform === 'deepseek') return 'DeepSeek'
+  if (props.platform === 'custom_openai_compatible') return 'OpenAI-compatible'
+  if (props.platform === 'custom_anthropic_compatible') return 'Anthropic-compatible'
   return 'Gemini'
 })
 
@@ -130,6 +134,10 @@ const platformClass = computed(() => {
   if (props.platform === 'minimax') return 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400'
   if (props.platform === 'volcengine') return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300'
   if (props.platform === 'mimo') return 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400'
+  if (props.platform === 'domestic') return 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400'
+  if (props.platform === 'deepseek') return 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400'
+  if (props.platform === 'custom_openai_compatible') return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+  if (props.platform === 'custom_anthropic_compatible') return 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
   return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
 })
 
@@ -142,6 +150,10 @@ const typeClass = computed(() => {
   if (props.platform === 'minimax') return 'bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400'
   if (props.platform === 'volcengine') return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
   if (props.platform === 'mimo') return 'bg-teal-100 text-teal-600 dark:bg-teal-900/30 dark:text-teal-400'
+  if (props.platform === 'domestic') return 'bg-cyan-100 text-cyan-600 dark:bg-cyan-900/30 dark:text-cyan-400'
+  if (props.platform === 'deepseek') return 'bg-sky-100 text-sky-600 dark:bg-sky-900/30 dark:text-sky-400'
+  if (props.platform === 'custom_openai_compatible') return 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400'
+  if (props.platform === 'custom_anthropic_compatible') return 'bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400'
   return 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
 })
 
