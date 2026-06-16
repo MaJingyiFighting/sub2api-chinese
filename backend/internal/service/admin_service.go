@@ -2796,6 +2796,15 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		account.AutoPauseOnExpired = *input.AutoPauseOnExpired
 	}
 
+	// Validate the *merged* Coding Plan consistency. account.Credentials /
+	// account.Extra now hold the post-update state (credentials merged at line
+	// above; extra applied), so a partial update cannot bypass the domestic
+	// provider rules (e.g. swapping in a domestic base_url while keeping
+	// platform=openai, or setting a mismatched coding_plan_provider).
+	if err := ValidateCodingPlanAccountConsistency(account.Platform, account.Type, account.Credentials, account.Extra); err != nil {
+		return nil, err
+	}
+
 	// 先验证分组是否存在（在任何写操作之前）
 	if input.GroupIDs != nil {
 		if err := s.validateAccountGroupBinding(ctx, account, *input.GroupIDs); err != nil {
@@ -2909,6 +2918,38 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	if input.RateMultiplier != nil {
 		if *input.RateMultiplier < 0 {
 			return nil, errors.New("rate_multiplier must be >= 0")
+		}
+	}
+
+	// Validate Coding Plan consistency on the *merged* state of every target
+	// account before any write. The repo merges credentials/extra keys, so a
+	// bulk update that injects a domestic base_url or coding_plan_provider must
+	// be checked against each account's post-merge platform/type — neither the
+	// account_ids path nor a domestic-platform filter may bypass it.
+	if len(input.Credentials) > 0 || len(input.Extra) > 0 {
+		accounts := accountsByID
+		if len(accounts) == 0 {
+			loaded, err := s.accountRepo.GetByIDs(ctx, input.AccountIDs)
+			if err != nil {
+				return nil, err
+			}
+			accounts = make(map[int64]*Account, len(loaded))
+			for _, account := range loaded {
+				if account != nil {
+					accounts[account.ID] = account
+				}
+			}
+		}
+		for _, accountID := range input.AccountIDs {
+			account := accounts[accountID]
+			if account == nil {
+				continue
+			}
+			mergedCreds := mergeCodingPlanValidationMap(account.Credentials, input.Credentials)
+			mergedExtra := mergeCodingPlanValidationMap(account.Extra, input.Extra)
+			if err := ValidateCodingPlanAccountConsistency(account.Platform, account.Type, mergedCreds, mergedExtra); err != nil {
+				return nil, fmt.Errorf("account %d: %w", accountID, err)
+			}
 		}
 	}
 
@@ -3790,7 +3831,7 @@ func (s *adminServiceImpl) validateAccountGroupBinding(ctx context.Context, acco
 		if group == nil || groupID <= 0 {
 			return fmt.Errorf("get group: %w", ErrGroupNotFound)
 		}
-		if !isAccountGroupPlatformCompatible(accountPlatform, group.Platform) {
+		if !isAccountGroupBindingCompatible(account, accountPlatform, group.Platform) {
 			return fmt.Errorf("account platform %q cannot bind to group %d with platform %q", accountPlatform, groupID, group.Platform)
 		}
 	}
@@ -3805,6 +3846,22 @@ func accountBindingPlatform(account *Account) string {
 		return string(provider)
 	}
 	return strings.TrimSpace(account.Platform)
+}
+
+// isAccountGroupBindingCompatible decides whether an account may join a group.
+//
+// Domestic Coding Plan accounts are isolated to their own provider's groups
+// (provider isolation — a kimi account cannot join a zhipu/openai group), with
+// one deliberate exception: the Anthropic variant of a domestic provider
+// (wire_api=anthropic_messages) MAY join an Anthropic-platform group so Claude
+// Code (/v1/messages) can use it. The Chat/Codex variant stays barred from
+// OpenAI/ChatGPT (and Anthropic) groups so domestic models never enter the
+// OpenAI official account pool.
+func isAccountGroupBindingCompatible(account *Account, accountPlatform, groupPlatform string) bool {
+	if IsCodingPlanAnthropicMessagesAccount(account) && strings.TrimSpace(groupPlatform) == PlatformAnthropic {
+		return true
+	}
+	return isAccountGroupPlatformCompatible(accountPlatform, groupPlatform)
 }
 
 func isAccountGroupPlatformCompatible(accountPlatform, groupPlatform string) bool {

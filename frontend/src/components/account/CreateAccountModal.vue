@@ -70,7 +70,7 @@
       <!-- Platform Selection - Segmented Control Style -->
       <div>
         <label class="input-label">{{ t('admin.accounts.platform') }}</label>
-        <div class="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-4 md:grid-cols-5 rounded-lg bg-gray-100 p-1.5 dark:bg-dark-700" data-tour="account-form-platform">
+        <div class="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-3 md:grid-cols-5 rounded-lg bg-gray-100 p-1.5 dark:bg-dark-700" data-tour="account-form-platform">
           <button
             v-for="p in availablePlatforms"
             :key="p.id"
@@ -78,13 +78,36 @@
             @click="handlePlatformSelect(p.id)"
             :class="[
               'flex flex-col sm:flex-row items-center justify-center gap-1.5 rounded-md px-2 py-2 text-sm font-medium transition-all min-h-[44px]',
-              form.platform === p.id
+              platformTab === p.id
                 ? 'bg-white shadow-sm dark:bg-dark-600 ' + p.activeColor
                 : 'text-gray-600 hover:text-gray-900 hover:bg-white/50 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-dark-600/50'
             ]"
           >
-            <PlatformIcon :platform="p.id" size="sm" class="shrink-0" />
+            <PlatformIcon :platform="(p.id as AccountPlatform)" size="sm" class="shrink-0" />
             <span class="truncate">{{ p.label }}</span>
+          </button>
+        </div>
+
+        <!-- Second-level domestic provider tabs -->
+        <div
+          v-if="platformTab === 'domestic'"
+          class="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-3 md:grid-cols-5 rounded-lg bg-gray-50 p-1.5 dark:bg-dark-800"
+          data-tour="account-form-domestic-provider"
+        >
+          <button
+            v-for="prov in domesticProviderTabs"
+            :key="prov.id"
+            type="button"
+            @click="handleDomesticProviderSelect(prov.id)"
+            :class="[
+              'flex flex-col sm:flex-row items-center justify-center gap-1.5 rounded-md px-2 py-2 text-sm font-medium transition-all min-h-[40px]',
+              form.platform === prov.id
+                ? 'bg-white shadow-sm dark:bg-dark-600 ' + prov.activeColor
+                : 'text-gray-600 hover:text-gray-900 hover:bg-white/50 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-dark-600/50'
+            ]"
+          >
+            <PlatformIcon :platform="prov.id" size="sm" class="shrink-0" />
+            <span class="truncate">{{ prov.label }}</span>
           </button>
         </div>
       </div>
@@ -949,38 +972,14 @@
 
       <!-- API Key input (only for apikey type, excluding Antigravity which has its own fields) -->
       <div v-if="form.type === 'apikey' && form.platform !== 'antigravity'" class="space-y-4">
-        <!-- API Format Selection (for domestic platforms) -->
-        <div v-if="isDomesticCodingPlanPlatform(form.platform)">
-          <label class="input-label">{{ t('admin.accounts.codingPlan.apiFormat') }}</label>
-          <div class="mt-2 flex gap-4">
-            <label class="flex cursor-pointer items-center">
-              <input
-                v-model="apiFormat"
-                type="radio"
-                value="chat_completions"
-                class="mr-2 text-primary-600 focus:ring-primary-500"
-              />
-              <span class="text-sm text-gray-700 dark:text-gray-300">Chat Completions</span>
-            </label>
-            <label class="flex cursor-pointer items-center">
-              <input
-                v-model="apiFormat"
-                type="radio"
-                value="anthropic_messages"
-                class="mr-2 text-primary-600 focus:ring-primary-500"
-              />
-              <span class="text-sm text-gray-700 dark:text-gray-300">
-                Anthropic Messages
-                <span class="ml-1 text-xs text-amber-600 dark:text-amber-400">（仅 /v1/messages）</span>
-              </span>
-            </label>
-          </div>
-          <p class="input-hint mt-1">{{ t('admin.accounts.codingPlan.apiFormatHint') }}</p>
-          <p
-            v-if="apiFormat === 'anthropic_messages'"
-            class="mt-1 text-xs text-amber-600 dark:text-amber-400"
-          >
-            注意：选择 Anthropic Messages 后，该账号只承接 /v1/messages（Claude Code 风格）请求；不会被 Codex /v1/responses 路由调度。
+        <!-- Domestic Coding Plan info banner: one key creates both variants -->
+        <div
+          v-if="isDomesticCodingPlanPlatform(form.platform)"
+          class="rounded-lg border border-teal-200 bg-teal-50 p-3 text-xs text-teal-800 dark:border-teal-800 dark:bg-teal-900/20 dark:text-teal-300"
+        >
+          <p>{{ t('admin.accounts.codingPlan.dualAccountHint') }}</p>
+          <p v-if="domesticEndpointPreview.noteKey" class="mt-1 text-amber-600 dark:text-amber-400">
+            {{ t(domesticEndpointPreview.noteKey) }}
           </p>
         </div>
 
@@ -990,21 +989,7 @@
             v-model="apiKeyBaseUrl"
             type="text"
             class="input"
-            :placeholder="
-              form.platform === 'openai'
-                ? 'https://api.openai.com'
-                : form.platform === 'gemini'
-                  ? 'https://generativelanguage.googleapis.com'
-                  : form.platform === 'kimi'
-                    ? (apiFormat === 'anthropic_messages' ? 'https://api.moonshot.cn/anthropic' : 'https://api.moonshot.cn/v1')
-                    : form.platform === 'zhipu'
-                      ? (apiFormat === 'anthropic_messages' ? 'https://open.bigmodel.cn/api/anthropic' : 'https://open.bigmodel.cn/api/coding/paas/v4')
-                      : form.platform === 'volcengine'
-                        ? 'https://ark.cn-beijing.volces.com/api/v3'
-                      : isDomesticCodingPlanPlatform(form.platform)
-                        ? 'experimental: please enter upstream url manually'
-                        : 'https://api.anthropic.com'
-            "
+            :placeholder="baseUrlPlaceholder"
           />
           <p class="input-hint">{{ baseUrlHint }}</p>
         </div>
@@ -1024,18 +1009,6 @@
             "
           />
           <p class="input-hint">{{ apiKeyHint }}</p>
-        </div>
-
-        <!-- Quota Probe Base URL (for domestic platforms) -->
-        <div v-if="isDomesticCodingPlanPlatform(form.platform)">
-          <label class="input-label">{{ t('admin.accounts.codingPlan.quotaBaseUrl') }}</label>
-          <input
-            v-model="quotaBaseUrl"
-            type="text"
-            class="input"
-            :placeholder="t('admin.accounts.codingPlan.quotaBaseUrlPlaceholder')"
-          />
-          <p class="input-hint">{{ t('admin.accounts.codingPlan.quotaBaseUrlHint') }}</p>
         </div>
 
         <div v-if="form.platform === 'volcengine'" class="rounded-lg border border-gray-200 p-3 dark:border-dark-600">
@@ -3280,6 +3253,13 @@ import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
 import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
 import { applyInterceptWarmup } from '@/components/account/credentialsBuilder'
+import {
+  DOMESTIC_PROVIDER_TABS,
+  buildDomesticAccountPayloads,
+  isDomesticCodingPlanPlatform,
+  resolveDomesticEndpoints,
+  type DomesticProvider
+} from '@/components/account/domesticCodingPlan'
 import { formatDateTimeLocalInput, parseDateTimeLocalInput } from '@/utils/format'
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
 import { VERTEX_LOCATION_OPTIONS } from '@/constants/account'
@@ -3321,7 +3301,26 @@ const oauthStepTitle = computed(() => {
 const baseUrlHint = computed(() => {
   if (form.platform === 'openai') return t('admin.accounts.openai.baseUrlHint')
   if (form.platform === 'gemini') return t('admin.accounts.gemini.baseUrlHint')
+  if (isDomesticCodingPlanPlatform(form.platform)) return t('admin.accounts.codingPlan.baseUrlHint')
   return t('admin.accounts.baseUrlHint')
+})
+
+// Resolved endpoints preview for the currently selected domestic provider,
+// driving the base-url placeholder and the dual-account info note.
+const domesticEndpointPreview = computed(() =>
+  resolveDomesticEndpoints(form.platform, apiKeyBaseUrl.value)
+)
+
+const baseUrlPlaceholder = computed(() => {
+  if (form.platform === 'openai') return 'https://api.openai.com'
+  if (form.platform === 'gemini') return 'https://generativelanguage.googleapis.com'
+  if (isDomesticCodingPlanPlatform(form.platform)) {
+    if (form.platform === 'minimax' || form.platform === 'mimo') {
+      return t('admin.accounts.codingPlan.baseUrlRequiredPlaceholder')
+    }
+    return domesticEndpointPreview.value.chatBaseUrl
+  }
+  return 'https://api.anthropic.com'
 })
 
 const apiKeyHint = computed(() => {
@@ -3402,8 +3401,6 @@ const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_acco
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
 const apiKeyValue = ref('')
-const apiFormat = ref<'chat_completions' | 'anthropic_messages'>('chat_completions')
-const quotaBaseUrl = ref('')
 const volcenginePlanType = ref<'coding_plan' | 'agent_plan'>('coding_plan')
 const volcengineRegion = ref('cn-beijing')
 const volcengineAccessKeyId = ref('')
@@ -3731,35 +3728,44 @@ const tempUnschedPresets = computed(() => [
   }
 ])
 
-const availablePlatforms: { id: AccountPlatform; label: string; activeColor: string }[] = [
+// First-level platform entries. "domestic" is a UI-only meta-tab that reveals
+// the domestic Coding Plan provider sub-tabs; it is never submitted as a
+// platform. The actual platform for a domestic account is the chosen provider.
+type PlatformTabId = AccountPlatform | 'domestic'
+const availablePlatforms: { id: PlatformTabId; label: string; activeColor: string }[] = [
   { id: 'anthropic', label: 'Anthropic', activeColor: 'text-orange-600 dark:text-orange-400' },
   { id: 'openai', label: 'OpenAI', activeColor: 'text-green-600 dark:text-green-400' },
   { id: 'gemini', label: 'Gemini', activeColor: 'text-blue-600 dark:text-blue-400' },
   { id: 'antigravity', label: 'Antigravity', activeColor: 'text-purple-600 dark:text-purple-400' },
-  { id: 'kimi', label: 'Kimi', activeColor: 'text-gray-800 dark:text-gray-200' },
-  { id: 'zhipu', label: 'Zhipu', activeColor: 'text-indigo-600 dark:text-indigo-400' },
-  { id: 'minimax', label: 'MiniMax', activeColor: 'text-rose-600 dark:text-rose-400' },
-  { id: 'volcengine', label: 'Volcengine', activeColor: 'text-blue-500 dark:text-blue-300' },
-  { id: 'mimo', label: 'MiMo', activeColor: 'text-teal-600 dark:text-teal-400' }
+  { id: 'domestic', label: t('admin.accounts.codingPlan.domesticTab'), activeColor: 'text-teal-600 dark:text-teal-400' }
 ]
 
-const isDomesticCodingPlanPlatform = (platform: string) =>
-  ['kimi', 'zhipu', 'minimax', 'volcengine', 'mimo'].includes(platform)
+const domesticProviderTabs = DOMESTIC_PROVIDER_TABS
 
-function handlePlatformSelect(p: AccountPlatform) {
-  form.platform = p;
-  // Auto-switch to apikey for domestic platforms
-  if (isDomesticCodingPlanPlatform(p)) {
-    form.type = 'apikey';
-    accountCategory.value = 'apikey';
-  } else if (p === 'anthropic' || p === 'gemini') {
-    form.type = 'oauth';
-  } else if (p === 'openai') {
-    form.type = 'oauth';
-  } else if (p === 'antigravity') {
-    form.type = 'oauth';
+// Tracks the active first-level tab. For domestic providers this stays
+// 'domestic' while form.platform holds the concrete provider (kimi/zhipu/...).
+const platformTab = ref<PlatformTabId>('anthropic')
+
+function handlePlatformSelect(p: PlatformTabId) {
+  platformTab.value = p
+  if (p === 'domestic') {
+    // Default to the first domestic provider so the form has a concrete platform.
+    handleDomesticProviderSelect(domesticProviderTabs[0].id)
+    return
+  }
+  form.platform = p
+  if (p === 'anthropic' || p === 'gemini' || p === 'openai' || p === 'antigravity') {
+    form.type = 'oauth'
   }
 }
+
+function handleDomesticProviderSelect(provider: DomesticProvider) {
+  platformTab.value = 'domestic'
+  form.platform = provider
+  form.type = 'apikey'
+  accountCategory.value = 'apikey'
+}
+
 
 
 const form = reactive({
@@ -3877,16 +3883,16 @@ watch(
 
 // Reset platform-specific settings when platform changes
 watch(
-  [() => form.platform, apiFormat],
-  ([newPlatform, format]) => {
-    // Reset base URL based on platform and format
+  () => form.platform,
+  (newPlatform) => {
+    // Reset base URL based on platform. Domestic providers leave the field
+    // empty for minimax/mimo (user-required) and prefill the Chat base URL for
+    // the others; the Anthropic endpoint is derived at submit time.
     if (isDomesticCodingPlanPlatform(newPlatform)) {
       if (newPlatform === 'kimi') {
-        apiKeyBaseUrl.value = format === 'anthropic_messages' ? 'https://api.moonshot.cn/anthropic' : 'https://api.moonshot.cn/v1'
+        apiKeyBaseUrl.value = 'https://api.moonshot.cn/v1'
       } else if (newPlatform === 'zhipu') {
-        apiKeyBaseUrl.value = format === 'anthropic_messages' ? 'https://open.bigmodel.cn/api/anthropic' : 'https://open.bigmodel.cn/api/coding/paas/v4'
-      } else if (newPlatform === 'minimax') {
-        apiKeyBaseUrl.value = ''
+        apiKeyBaseUrl.value = 'https://open.bigmodel.cn/api/coding/paas/v4'
       } else if (newPlatform === 'volcengine') {
         apiKeyBaseUrl.value = 'https://ark.cn-beijing.volces.com/api/v3'
       } else {
@@ -4301,6 +4307,7 @@ const resetForm = () => {
   form.name = ''
   form.notes = ''
   form.platform = 'anthropic'
+  platformTab.value = 'anthropic'
   form.type = 'oauth'
   form.credentials = {}
   form.proxy_id = null
@@ -4314,8 +4321,6 @@ const resetForm = () => {
   addMethod.value = 'oauth'
   apiKeyBaseUrl.value = 'https://api.anthropic.com'
   apiKeyValue.value = ''
-  apiFormat.value = 'chat_completions'
-  quotaBaseUrl.value = ''
   volcenginePlanType.value = 'coding_plan'
   volcengineRegion.value = 'cn-beijing'
   volcengineAccessKeyId.value = ''
@@ -4575,6 +4580,98 @@ const handleVertexServiceAccountDrop = async (event: DragEvent) => {
   applyVertexServiceAccountJson(await file.text())
 }
 
+// Create the one or two domestic Coding Plan accounts (Chat/Codex + Claude Code)
+// from a single API key + base URL.
+const createDomesticCodingPlanAccounts = async () => {
+  const provider = form.platform as DomesticProvider
+
+  // Advanced credential settings shared into the Chat/Codex variant.
+  const baseCredentials: Record<string, unknown> = {}
+  if (provider === 'volcengine') {
+    if (volcengineAccessKeyId.value.trim()) {
+      baseCredentials.volcengine_access_key_id = volcengineAccessKeyId.value.trim()
+    }
+    if (volcengineSecretAccessKey.value.trim()) {
+      baseCredentials.volcengine_secret_access_key = volcengineSecretAccessKey.value.trim()
+    }
+  }
+  if (poolModeEnabled.value) {
+    baseCredentials.pool_mode = true
+    baseCredentials.pool_mode_retry_count = normalizePoolModeRetryCount(poolModeRetryCount.value)
+    const parsedRetryStatusCodes = parsePoolModeRetryStatusCodes(poolModeRetryStatusCodesInput.value)
+    if (parsedRetryStatusCodes.length > 0) {
+      baseCredentials.pool_mode_retry_status_codes = parsedRetryStatusCodes
+    }
+  }
+  if (customErrorCodesEnabled.value) {
+    baseCredentials.custom_error_codes_enabled = true
+    baseCredentials.custom_error_codes = [...selectedErrorCodes.value]
+  }
+  applyInterceptWarmup(baseCredentials, interceptWarmupRequests.value, 'create')
+  if (!applyTempUnschedConfig(baseCredentials)) {
+    return
+  }
+
+  // Provider-specific extra (Volcengine OpenAPI quota fields).
+  const baseExtra: Record<string, unknown> = {}
+  if (provider === 'volcengine') {
+    baseExtra.coding_plan_probe_status =
+      volcengineAccessKeyId.value.trim() && volcengineSecretAccessKey.value.trim() ? 'supported' : 'experimental'
+    baseExtra.volcengine_plan_type = volcenginePlanType.value
+    baseExtra.volcengine_region = volcengineRegion.value.trim() || 'cn-beijing'
+    baseExtra.volcengine_service = 'ark'
+    if (volcengineSeatId.value.trim()) baseExtra.volcengine_seat_id = volcengineSeatId.value.trim()
+    if (volcengineAccountId.value.trim()) baseExtra.volcengine_account_id = volcengineAccountId.value.trim()
+    if (volcengineProjectName.value.trim()) baseExtra.volcengine_project_name = volcengineProjectName.value.trim()
+  }
+
+  const modelMapping = isOpenAIModelRestrictionDisabled.value
+    ? null
+    : (buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value) as
+        | Record<string, string>
+        | null)
+
+  const { payloads, anthropicCreated } = buildDomesticAccountPayloads({
+    provider,
+    name: form.name.trim(),
+    notes: form.notes,
+    apiKey: apiKeyValue.value.trim(),
+    inputBaseUrl: apiKeyBaseUrl.value.trim(),
+    modelMapping,
+    groups: props.groups.map((g) => ({ id: g.id, platform: g.platform })),
+    selectedGroupIds: form.group_ids,
+    baseExtra,
+    baseCredentials,
+    proxyId: form.proxy_id,
+    concurrency: form.concurrency,
+    loadFactor: form.load_factor,
+    priority: form.priority,
+    rateMultiplier: form.rate_multiplier,
+    expiresAt: form.expires_at,
+    autoPauseOnExpired: autoPauseOnExpired.value
+  })
+
+  submitting.value = true
+  try {
+    for (const payload of payloads) {
+      await adminAPI.accounts.create(payload)
+    }
+    appStore.showSuccess(
+      anthropicCreated
+        ? t('admin.accounts.codingPlan.dualAccountCreated')
+        : t('admin.accounts.codingPlan.chatOnlyCreated')
+    )
+    emit('created')
+    handleClose()
+  } catch (error: any) {
+    appStore.showError(
+      error.response?.data?.message || error.response?.data?.detail || t('admin.accounts.failedToCreate')
+    )
+  } finally {
+    submitting.value = false
+  }
+}
+
 const handleSubmit = async () => {
   // For OAuth-based type, handle OAuth flow (goes to step 2)
   if (isOAuthFlow.value) {
@@ -4721,49 +4818,31 @@ const handleSubmit = async () => {
     return
   }
 
-  // Handle MiMo/MiniMax base_url validation
-  if ((form.platform === 'mimo' || form.platform === 'minimax') && !apiKeyBaseUrl.value.trim()) {
-    appStore.showError(t('admin.accounts.codingPlan.baseUrlRequired'))
+  // Domestic Coding Plan: one API key materializes both the Chat/Codex variant
+  // (/v1/responses via Chat Completions) and, when the provider supports it, the
+  // Anthropic Messages variant (Claude Code /v1/messages). The key is entered
+  // once; there is no API-format choice and no separate quota URL.
+  if (isDomesticCodingPlanPlatform(form.platform)) {
+    if ((form.platform === 'minimax' || form.platform === 'mimo') && !apiKeyBaseUrl.value.trim()) {
+      appStore.showError(t('admin.accounts.codingPlan.baseUrlRequired'))
+      return
+    }
+    await createDomesticCodingPlanAccounts()
     return
   }
 
-  // Determine default base URL based on platform
+  // Determine default base URL based on platform (non-domestic api-key accounts)
   let defaultBaseUrl = 'https://api.anthropic.com'
   if (form.platform === 'openai') {
     defaultBaseUrl = 'https://api.openai.com'
   } else if (form.platform === 'gemini') {
     defaultBaseUrl = 'https://generativelanguage.googleapis.com'
-  } else if (form.platform === 'kimi') {
-    defaultBaseUrl = apiFormat.value === 'anthropic_messages' ? 'https://api.moonshot.cn/anthropic' : 'https://api.moonshot.cn/v1'
-  } else if (form.platform === 'zhipu') {
-    defaultBaseUrl = apiFormat.value === 'anthropic_messages' ? 'https://open.bigmodel.cn/api/anthropic' : 'https://open.bigmodel.cn/api/coding/paas/v4'
-  } else if (form.platform === 'minimax') {
-    defaultBaseUrl = '' // No fixed default, user must provide
-  } else if (form.platform === 'volcengine') {
-    defaultBaseUrl = 'https://ark.cn-beijing.volces.com/api/v3'
-  } else if (form.platform === 'mimo') {
-    defaultBaseUrl = '' // No fixed default, user must provide
   }
 
   // Build credentials with optional model mapping
   const credentials: Record<string, unknown> = {
     base_url: apiKeyBaseUrl.value.trim() || defaultBaseUrl,
     api_key: apiKeyValue.value.trim()
-  }
-  if (isDomesticCodingPlanPlatform(form.platform)) {
-    credentials.api_format = apiFormat.value
-    credentials.wire_api = apiFormat.value === 'chat_completions' ? 'openai_chat' : 'anthropic_messages'
-    if (apiFormat.value === 'chat_completions') {
-      credentials.chat_completions_route_enabled = true
-    }
-  }
-  if (form.platform === 'volcengine') {
-    if (volcengineAccessKeyId.value.trim()) {
-      credentials.volcengine_access_key_id = volcengineAccessKeyId.value.trim()
-    }
-    if (volcengineSecretAccessKey.value.trim()) {
-      credentials.volcengine_secret_access_key = volcengineSecretAccessKey.value.trim()
-    }
   }
   if (form.platform === 'gemini') {
     credentials.tier_id = geminiTierAIStudio.value
@@ -4807,30 +4886,6 @@ const handleSubmit = async () => {
 
   form.credentials = credentials
   const extra = buildAnthropicExtra(buildOpenAIExtra()) || {}
-
-  if (isDomesticCodingPlanPlatform(form.platform)) {
-    extra.coding_plan_provider = form.platform
-    extra.coding_plan_probe_status = (form.platform === 'volcengine' || form.platform === 'mimo') ? 'experimental' : 'supported'
-    if (quotaBaseUrl.value.trim()) {
-      extra.quota_base_url = quotaBaseUrl.value.trim()
-    }
-    extra.responses_support = apiFormat.value === 'chat_completions' ? 'via_chat_completions' : 'via_anthropic_messages'
-    if (form.platform === 'volcengine') {
-      extra.coding_plan_probe_status = (volcengineAccessKeyId.value.trim() && volcengineSecretAccessKey.value.trim()) ? 'supported' : 'experimental'
-      extra.volcengine_plan_type = volcenginePlanType.value
-      extra.volcengine_region = volcengineRegion.value.trim() || 'cn-beijing'
-      extra.volcengine_service = 'ark'
-      if (volcengineSeatId.value.trim()) {
-        extra.volcengine_seat_id = volcengineSeatId.value.trim()
-      }
-      if (volcengineAccountId.value.trim()) {
-        extra.volcengine_account_id = volcengineAccountId.value.trim()
-      }
-      if (volcengineProjectName.value.trim()) {
-        extra.volcengine_project_name = volcengineProjectName.value.trim()
-      }
-    }
-  }
 
   await doCreateAccount({
     ...form,

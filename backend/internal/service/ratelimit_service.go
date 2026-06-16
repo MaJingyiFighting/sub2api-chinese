@@ -165,7 +165,7 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	customErrorCodesEnabled := account.IsCustomErrorCodesEnabled()
 
 	if IsCodingPlanAccount(account) {
-		if handled := s.handleCodingPlanUpstreamError(ctx, account, statusCode, responseBody); handled {
+		if handled := s.handleCodingPlanUpstreamError(ctx, account, statusCode, headers, responseBody); handled {
 			return true
 		}
 	}
@@ -827,7 +827,7 @@ func (s *RateLimitService) handleOpenAI403(ctx context.Context, account *Account
 	return true
 }
 
-func (s *RateLimitService) handleCodingPlanUpstreamError(ctx context.Context, account *Account, statusCode int, responseBody []byte) bool {
+func (s *RateLimitService) handleCodingPlanUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte) bool {
 	if s == nil || account == nil {
 		return false
 	}
@@ -835,7 +835,7 @@ func (s *RateLimitService) handleCodingPlanUpstreamError(ctx context.Context, ac
 	if provider == "" {
 		return false
 	}
-	decision := ClassifyCodingPlanProviderError(provider, statusCode, responseBody, account)
+	decision := ClassifyCodingPlanProviderError(provider, statusCode, headers, responseBody, account)
 	if !decision.AuthFailed && !decision.RateLimited && !decision.Overloaded && !decision.QuotaExhausted {
 		return false
 	}
@@ -866,14 +866,22 @@ func (s *RateLimitService) handleCodingPlanUpstreamError(ctx context.Context, ac
 		reason = fmt.Sprintf("%s quota exhausted (%d)", provider, statusCode)
 	}
 	if s.accountRepo != nil {
-		_ = s.accountRepo.UpdateExtra(ctx, account.ID, map[string]any{
+		extraUpdates := map[string]any{
 			"coding_plan_provider":         string(provider),
 			"coding_plan_account_status":   decision.Reason,
 			"coding_plan_probe_error":      reason,
 			"coding_plan_source":           "error",
 			"coding_plan_success":          false,
 			"coding_plan_usage_updated_at": time.Now().UTC().Format(time.RFC3339),
-		})
+		}
+		// Persist the consecutive-429 streak so the next 429 escalates the
+		// backoff (1m → 2m → 5m → 10m → 15m). Cleared by a longer quiet window
+		// (see nextCodingPlanRateLimitStreak).
+		if decision.RateLimited && decision.RateLimitStreak > 0 {
+			extraUpdates["coding_plan_rate_limit_streak"] = decision.RateLimitStreak
+			extraUpdates["coding_plan_rate_limit_at"] = time.Now().UTC().Format(time.RFC3339)
+		}
+		_ = s.accountRepo.UpdateExtra(ctx, account.ID, extraUpdates)
 		if err := s.accountRepo.SetTempUnschedulable(ctx, account.ID, *decision.TempUnschedulableUntil, reason); err != nil {
 			slog.Warn("coding_plan_set_temp_unschedulable_failed", "account_id", account.ID, "provider", provider, "error", err)
 		}
