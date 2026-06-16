@@ -2493,60 +2493,11 @@ func (h *AccountHandler) GetAntigravityDefaultModelMapping(c *gin.Context) {
 
 // validateCodingPlanProvider 校验 Coding Plan 供应商账号的平台/类型/供应商一致性。
 //
-// 规则（与前端 Coding Plan 入口对齐，且不再让国产账号伪装成 OpenAI 平台）：
-//   - extra.coding_plan_provider 为空时不做约束。
-//   - 设置了 coding_plan_provider 时，平台必须是国产 Coding Plan 平台
-//     （kimi / zhipu / minimax / volcengine / mimo），且类型必须是
-//     apikey 或 upstream（上游透传）。
-//   - 平台与 extra.coding_plan_provider 必须一致，禁止 platform=kimi
-//     却把 provider 写成 zhipu 这类不一致情况。
-//
-// 这样后端 /v1/responses 路由就可以统一以 group/account platform 判断是否进入
-// CodingPlanResponses，前端无需再以 OpenAI 平台伪装国产 Coding Plan。
+// 这是 create 入口的快速校验；update / bulk-update 在 service 层对“合并后的
+// 最终态”再次校验（见 service.ValidateCodingPlanAccountConsistency），两者复用
+// 同一份规则，避免逻辑分叉，也避免部分更新绕过。
 func validateCodingPlanProvider(platform, typ string, credentials, extra map[string]any) error {
-	platform = strings.ToLower(strings.TrimSpace(platform))
-	typ = strings.ToLower(strings.TrimSpace(typ))
-	if provider := service.DetectCodingPlanProviderFromBaseURL(credentialString(credentials, "base_url")); provider != "" && platform == service.PlatformOpenAI && (typ == "" || typ == service.AccountTypeAPIKey || typ == service.AccountTypeUpstream) {
-		return fmt.Errorf("base_url belongs to %s Coding Plan; use platform=%s instead of platform=openai", provider, provider)
-	}
-	if extra == nil {
-		return nil
-	}
-	rawProvider, ok := extra["coding_plan_provider"].(string)
-	if !ok {
-		return nil
-	}
-	provider := strings.ToLower(strings.TrimSpace(rawProvider))
-	if provider == "" {
-		return nil
-	}
-	// 1. provider 必须是已支持的国产 Coding Plan 供应商
-	if !service.IsCodingPlanPlatform(provider) {
-		return fmt.Errorf("unsupported coding_plan_provider %q (allowed: kimi, zhipu, minimax, volcengine, mimo)", rawProvider)
-	}
-	// 2. 平台必须是同一国产 Coding Plan 平台
-	if !service.IsCodingPlanPlatform(platform) {
-		return fmt.Errorf("coding plan accounts must use one of the domestic platforms (kimi/zhipu/minimax/volcengine/mimo); got platform=%q", platform)
-	}
-	if platform != provider {
-		return fmt.Errorf("coding_plan_provider %q does not match platform %q; they must be the same", provider, platform)
-	}
-	// 3. 类型必须是 apikey 或 upstream（上游透传 = base_url + api_key）
-	if typ != service.AccountTypeAPIKey && typ != service.AccountTypeUpstream {
-		return fmt.Errorf("coding plan accounts must use 'apikey' or 'upstream' type; got type=%q", typ)
-	}
-	return nil
-}
-
-func credentialString(credentials map[string]any, key string) string {
-	if credentials == nil {
-		return ""
-	}
-	raw, ok := credentials[key]
-	if !ok || raw == nil {
-		return ""
-	}
-	return strings.TrimSpace(fmt.Sprint(raw))
+	return service.ValidateCodingPlanAccountConsistency(platform, typ, credentials, extra)
 }
 
 func sanitizeExtraBaseRPM(extra map[string]any) {

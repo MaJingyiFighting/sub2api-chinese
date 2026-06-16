@@ -61,6 +61,7 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GroupBadge from './GroupBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
+import { isDomesticCodingPlanPlatform } from '@/components/account/domesticCodingPlan'
 import type { AdminGroup, GroupPlatform } from '@/types'
 
 const { t } = useI18n()
@@ -96,6 +97,11 @@ const filteredGroups = computed(() => {
       result = result.filter(
         (g) => g.platform === 'antigravity' || g.platform === 'anthropic' || g.platform === 'gemini'
       )
+    } else if (isDomesticCodingPlanPlatform(props.platform)) {
+      // 国内 Coding Plan：可选择本供应商分组（Chat/Codex 变体）以及 Anthropic
+      // 分组（Anthropic 变体供 Claude Code 使用）。双账号创建时会按分组平台
+      // 自动拆分到对应变体。
+      result = result.filter((g) => g.platform === props.platform || g.platform === 'anthropic')
     } else {
       // 默认：只能选择同 platform 的分组
       result = result.filter((g) => g.platform === props.platform)

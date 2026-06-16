@@ -87,6 +87,10 @@ type ProviderErrorDecision struct {
 	AuthFailed             bool
 	TempUnschedulableUntil *time.Time
 	Reason                 string
+	// RateLimitStreak is the consecutive-429 counter that produced this
+	// decision's cooldown (1 for the first 429 in a streak). It is persisted so
+	// the next 429 can escalate the backoff. Zero when not rate-limited.
+	RateLimitStreak int
 }
 
 type codingPlanHTTPProbe struct {
@@ -179,6 +183,86 @@ func normalizeCodingPlanProvider(value string) CodingPlanProvider {
 
 func IsCodingPlanAccount(account *Account) bool {
 	return ResolveCodingPlanProvider(account) != ""
+}
+
+// ValidateCodingPlanAccountConsistency enforces that a domestic Coding Plan
+// account is configured coherently. It is the single source of truth for this
+// rule and is invoked by create/update/bulk-update on the *final merged* state
+// so the validation cannot be bypassed by a partial update.
+//
+// Rules (aligned with the frontend Coding Plan entry; domestic models must not
+// masquerade as the OpenAI platform):
+//   - A base_url that belongs to a domestic Coding Plan provider may not be
+//     attached to platform=openai (apikey/upstream) — use platform=<provider>.
+//   - When extra.coding_plan_provider is set it must be a supported domestic
+//     provider, the platform must be that same domestic provider, and the type
+//     must be apikey or upstream.
+//   - When extra.coding_plan_provider is empty, no constraint is imposed.
+//
+// Note: wire_api is intentionally unconstrained — a domestic provider account
+// may use wire_api=openai_chat (Chat/Codex variant) or wire_api=anthropic_messages
+// (Claude Code variant); both are valid.
+func ValidateCodingPlanAccountConsistency(platform, typ string, credentials, extra map[string]any) error {
+	platform = strings.ToLower(strings.TrimSpace(platform))
+	typ = strings.ToLower(strings.TrimSpace(typ))
+	if provider := DetectCodingPlanProviderFromBaseURL(codingPlanMapString(credentials, "base_url")); provider != "" &&
+		platform == PlatformOpenAI && (typ == "" || typ == AccountTypeAPIKey || typ == AccountTypeUpstream) {
+		return fmt.Errorf("base_url belongs to %s Coding Plan; use platform=%s instead of platform=openai", provider, provider)
+	}
+	if extra == nil {
+		return nil
+	}
+	rawProvider, ok := extra["coding_plan_provider"].(string)
+	if !ok {
+		return nil
+	}
+	provider := strings.ToLower(strings.TrimSpace(rawProvider))
+	if provider == "" {
+		return nil
+	}
+	if !IsCodingPlanPlatform(provider) {
+		return fmt.Errorf("unsupported coding_plan_provider %q (allowed: kimi, zhipu, minimax, volcengine, mimo)", rawProvider)
+	}
+	if !IsCodingPlanPlatform(platform) {
+		return fmt.Errorf("coding plan accounts must use one of the domestic platforms (kimi/zhipu/minimax/volcengine/mimo); got platform=%q", platform)
+	}
+	if platform != provider {
+		return fmt.Errorf("coding_plan_provider %q does not match platform %q; they must be the same", provider, platform)
+	}
+	if typ != AccountTypeAPIKey && typ != AccountTypeUpstream {
+		return fmt.Errorf("coding plan accounts must use 'apikey' or 'upstream' type; got type=%q", typ)
+	}
+	return nil
+}
+
+// codingPlanMapString reads a trimmed string value from a raw map.
+func codingPlanMapString(m map[string]any, key string) string {
+	if m == nil {
+		return ""
+	}
+	raw, ok := m[key]
+	if !ok || raw == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(raw))
+}
+
+// mergeCodingPlanValidationMap overlays update keys onto a copy of base, modeling
+// the post-update state of a credentials/extra JSONB (the repo merges keys rather
+// than replacing the whole object). Used to validate the merged result of a bulk
+// update before any write happens.
+func mergeCodingPlanValidationMap(base, updates map[string]any) map[string]any {
+	if len(updates) == 0 {
+		return base
+	}
+	merged := make(map[string]any, len(base)+len(updates))
+	for k, v := range base {
+		merged[k] = v
+	}
+	for k, v := range updates {
+		merged[k] = v
+	}
+	return merged
 }
 
 func GetCodingPlanAPIFormat(account *Account) string {
@@ -1388,7 +1472,7 @@ func codingPlanStringPtr(value string) *string {
 	return &value
 }
 
-func ClassifyCodingPlanProviderError(provider CodingPlanProvider, statusCode int, body []byte, account *Account) ProviderErrorDecision {
+func ClassifyCodingPlanProviderError(provider CodingPlanProvider, statusCode int, headers http.Header, body []byte, account *Account) ProviderErrorDecision {
 	now := time.Now()
 	message := strings.ToLower(strings.TrimSpace(extractUpstreamErrorMessage(body)))
 	if message == "" {
@@ -1404,8 +1488,9 @@ func ClassifyCodingPlanProviderError(provider CodingPlanProvider, statusCode int
 		decision.Retryable = true
 		decision.ShouldFailover = true
 		decision.Reason = "rate_limited"
-		until := codingPlanCooldownUntil(account, "5h", now, 5*time.Minute)
+		until, streak := codingPlan429CooldownUntil(account, headers, now)
 		decision.TempUnschedulableUntil = &until
+		decision.RateLimitStreak = streak
 	case statusCode == 529:
 		decision.Overloaded = true
 		decision.Retryable = true
@@ -1479,4 +1564,122 @@ func codingPlanCooldownUntil(account *Account, window string, now time.Time, fal
 		}
 	}
 	return now.Add(fallback)
+}
+
+// codingPlanRateLimitMaxCooldown caps how long a 429 can park an account, so a
+// bogus Retry-After can't strand a provider for hours.
+const codingPlanRateLimitMaxCooldown = 15 * time.Minute
+
+// codingPlan429CooldownUntil computes the temp-unschedulable deadline for a 429
+// from a domestic Coding Plan upstream, plus the consecutive-429 streak that
+// produced it. Precedence (per spec):
+//  1. Retry-After (delta-seconds, then HTTP-date)
+//  2. provider rate-limit reset headers (x-ratelimit-reset / ratelimit-reset)
+//  3. exponential backoff keyed on the consecutive-429 streak (60s base)
+//
+// The result is always clamped to codingPlanRateLimitMaxCooldown (15m).
+func codingPlan429CooldownUntil(account *Account, headers http.Header, now time.Time) (time.Time, int) {
+	streak := nextCodingPlanRateLimitStreak(account, now)
+
+	if delay, ok := codingPlanRetryAfterDelay(headers, now); ok && delay > 0 {
+		if delay > codingPlanRateLimitMaxCooldown {
+			delay = codingPlanRateLimitMaxCooldown
+		}
+		return now.Add(delay), streak
+	}
+
+	backoff := codingPlanRateLimitBackoff(streak)
+	return now.Add(backoff), streak
+}
+
+// codingPlanRetryAfterDelay extracts a positive cooldown from the upstream
+// response headers, trying the standard Retry-After header first and then
+// common provider-specific rate-limit reset headers.
+func codingPlanRetryAfterDelay(headers http.Header, now time.Time) (time.Duration, bool) {
+	if headers == nil {
+		return 0, false
+	}
+	if resetAt := parseRetryAfterResetTime(headers, now); resetAt != nil {
+		if d := resetAt.Sub(now); d > 0 {
+			return d, true
+		}
+		// A non-positive Retry-After still signals "rate limited now"; treat it
+		// as a minimal backoff rather than ignoring the header entirely.
+		return time.Second, true
+	}
+	for _, name := range []string{"x-ratelimit-reset", "ratelimit-reset", "x-ratelimit-reset-requests", "x-ratelimit-reset-tokens"} {
+		raw := strings.TrimSpace(headers.Get(name))
+		if raw == "" {
+			continue
+		}
+		if d, ok := parseCodingPlanResetHeaderValue(raw, now); ok {
+			return d, true
+		}
+	}
+	return 0, false
+}
+
+// parseCodingPlanResetHeaderValue interprets a rate-limit reset header value,
+// which providers express either as seconds-until-reset (a small number, or a
+// "12s"/"1m" duration) or as an absolute unix timestamp.
+func parseCodingPlanResetHeaderValue(raw string, now time.Time) (time.Duration, bool) {
+	if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+		return d, true
+	}
+	seconds, err := strconv.ParseFloat(raw, 64)
+	if err != nil || seconds <= 0 {
+		return 0, false
+	}
+	// Heuristic: a value large enough to be a unix timestamp is treated as an
+	// absolute reset time; otherwise it is a delta in seconds.
+	if seconds > 1_000_000_000 {
+		resetAt := unixFlexibleTime(int64(seconds))
+		if resetAt == nil {
+			return 0, false
+		}
+		if d := resetAt.Sub(now); d > 0 {
+			return d, true
+		}
+		return time.Second, true
+	}
+	return time.Duration(seconds * float64(time.Second)), true
+}
+
+// codingPlanRateLimitBackoff maps a consecutive-429 streak to a cooldown:
+// 1→60s, 2→2m, 3→5m, 4→10m, 5+→15m.
+func codingPlanRateLimitBackoff(streak int) time.Duration {
+	switch {
+	case streak <= 1:
+		return 60 * time.Second
+	case streak == 2:
+		return 2 * time.Minute
+	case streak == 3:
+		return 5 * time.Minute
+	case streak == 4:
+		return 10 * time.Minute
+	default:
+		return codingPlanRateLimitMaxCooldown
+	}
+}
+
+// nextCodingPlanRateLimitStreak reads the prior consecutive-429 streak from the
+// account extra and returns the next value. The streak resets to 1 when the
+// previous 429 is older than the max cooldown window (the account has had time
+// to recover and serve traffic again).
+func nextCodingPlanRateLimitStreak(account *Account, now time.Time) int {
+	if account == nil || len(account.Extra) == 0 {
+		return 1
+	}
+	prev := parseExtraInt(account.Extra["coding_plan_rate_limit_streak"])
+	if prev <= 0 {
+		return 1
+	}
+	if raw, ok := account.Extra["coding_plan_rate_limit_at"]; ok {
+		if lastAt, err := parseTime(fmt.Sprint(raw)); err == nil {
+			if now.Sub(lastAt) > codingPlanRateLimitMaxCooldown {
+				return 1
+			}
+		}
+	}
+	return prev + 1
 }

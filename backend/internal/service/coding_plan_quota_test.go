@@ -278,12 +278,12 @@ func TestCodingPlanQuotaSchedulingHelpers(t *testing.T) {
 	account.Extra["coding_plan_usage_updated_at"] = now.Add(-3 * time.Hour).Format(time.RFC3339)
 	require.Equal(t, 0.0, codingPlanQuotaUtilization(account, now))
 
-	decision := ClassifyCodingPlanProviderError(CodingPlanProviderMiniMax, 429, []byte(`{"error":"rate"}`), account)
+	decision := ClassifyCodingPlanProviderError(CodingPlanProviderMiniMax, 429, nil, []byte(`{"error":"rate"}`), account)
 	require.True(t, decision.ShouldFailover)
 	require.True(t, decision.RateLimited)
 	require.NotNil(t, decision.TempUnschedulableUntil)
 
-	quota := ClassifyCodingPlanProviderError(CodingPlanProviderVolcengine, 400, []byte(`{"error":"AFP exhausted"}`), account)
+	quota := ClassifyCodingPlanProviderError(CodingPlanProviderVolcengine, 400, nil, []byte(`{"error":"AFP exhausted"}`), account)
 	require.True(t, quota.QuotaExhausted)
 	require.True(t, quota.ShouldFailover)
 }
@@ -375,22 +375,22 @@ func TestCodingPlanAPIFormatDetectionUsesWireAndResponsesSupport(t *testing.T) {
 
 func TestCodingPlanProviderErrorClassifier(t *testing.T) {
 	account := &Account{Extra: map[string]any{}}
-	auth := ClassifyCodingPlanProviderError(CodingPlanProviderKimi, 403, []byte(`{"error":"forbidden"}`), account)
+	auth := ClassifyCodingPlanProviderError(CodingPlanProviderKimi, 403, nil, []byte(`{"error":"forbidden"}`), account)
 	require.True(t, auth.AuthFailed)
 	require.False(t, auth.ShouldFailover)
 
-	overloaded := ClassifyCodingPlanProviderError(CodingPlanProviderZhipu, 529, []byte(`overloaded`), account)
+	overloaded := ClassifyCodingPlanProviderError(CodingPlanProviderZhipu, 529, nil, []byte(`overloaded`), account)
 	require.True(t, overloaded.Overloaded)
 	require.True(t, overloaded.ShouldFailover)
 	require.NotNil(t, overloaded.TempUnschedulableUntil)
 
-	serverError := ClassifyCodingPlanProviderError(CodingPlanProviderMiniMax, 503, []byte(`service unavailable`), account)
+	serverError := ClassifyCodingPlanProviderError(CodingPlanProviderMiniMax, 503, nil, []byte(`service unavailable`), account)
 	require.True(t, serverError.Overloaded)
 	require.True(t, serverError.Retryable)
 
 	weeklyReset := time.Now().Add(2 * time.Hour).UTC()
 	account.Extra["coding_plan_weekly_reset_at"] = weeklyReset.Format(time.RFC3339)
-	weeklyQuota := ClassifyCodingPlanProviderError(CodingPlanProviderKimi, 400, []byte(`weekly quota exhausted`), account)
+	weeklyQuota := ClassifyCodingPlanProviderError(CodingPlanProviderKimi, 400, nil, []byte(`weekly quota exhausted`), account)
 	require.True(t, weeklyQuota.QuotaExhausted)
 	require.NotNil(t, weeklyQuota.TempUnschedulableUntil)
 	require.WithinDuration(t, weeklyReset, *weeklyQuota.TempUnschedulableUntil, time.Second)

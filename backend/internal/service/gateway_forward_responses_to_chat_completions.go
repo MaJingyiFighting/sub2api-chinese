@@ -257,6 +257,13 @@ func (s *GatewayService) handleResponsesBufferedFromCC(
 	var contentBuilder strings.Builder
 	var reasoningBuilder strings.Builder
 
+	// Some Coding Plan upstreams embed chain-of-thought in the assistant content
+	// as `<think>...</think>` instead of a structured reasoning_content field.
+	// Strip those blocks (across chunk boundaries) so they never reach the
+	// user-visible Responses output_text; the extracted reasoning is preserved in
+	// reasoningBuilder.
+	thinkExtractor := &apicompat.ThinkTagExtractor{}
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data: ") {
@@ -281,7 +288,9 @@ func (s *GatewayService) handleResponsesBufferedFromCC(
 		if len(chunk.Choices) > 0 {
 			delta := chunk.Choices[0].Delta
 			if delta.Content != nil {
-				contentBuilder.WriteString(*delta.Content)
+				visible, reasoning := thinkExtractor.Push(*delta.Content)
+				contentBuilder.WriteString(visible)
+				reasoningBuilder.WriteString(reasoning)
 			}
 			if delta.ReasoningContent != nil {
 				reasoningBuilder.WriteString(*delta.ReasoningContent)
@@ -320,6 +329,12 @@ func (s *GatewayService) handleResponsesBufferedFromCC(
 				zap.String("request_id", requestID),
 			)
 		}
+	}
+
+	// Drain any buffered partial `<think>` fragment left at end-of-stream.
+	if visible, reasoning := thinkExtractor.Flush(); visible != "" || reasoning != "" {
+		contentBuilder.WriteString(visible)
+		reasoningBuilder.WriteString(reasoning)
 	}
 
 	if contentBuilder.Len() > 0 {
@@ -376,6 +391,11 @@ func (s *GatewayService) handleResponsesStreamingFromCC(
 	c.Writer.WriteHeader(http.StatusOK)
 
 	ccState := apicompat.NewChatCompletionsToResponsesStreamState(originalModel)
+
+	// Strip inline `<think>...</think>` reasoning from the visible content before
+	// converting to Responses events, so it never reaches output_text deltas. The
+	// extractor is stateful across chunks (tags may be split on any boundary).
+	thinkExtractor := &apicompat.ThinkTagExtractor{}
 
 	var usage ClaudeUsage
 	var firstTokenMs *int
@@ -439,6 +459,12 @@ func (s *GatewayService) handleResponsesStreamingFromCC(
 			usage.OutputTokens = chunk.Usage.CompletionTokens
 		}
 
+		// Sanitize visible content: strip `<think>` blocks before conversion.
+		// Reasoning extracted from think tags is dropped from the stream (it must
+		// not become an output_text delta); native delta.reasoning_content is left
+		// untouched and still surfaces as a reasoning summary.
+		sanitizeChatChunkThinkTags(&chunk, thinkExtractor)
+
 		resEvents := apicompat.ChatCompletionsChunkToResponsesEvents(&chunk, ccState)
 		for _, evt := range resEvents {
 			if disconnected := writeEvent(evt); disconnected {
@@ -459,6 +485,16 @@ func (s *GatewayService) handleResponsesStreamingFromCC(
 		}
 	}
 
+	// Emit any visible text left buffered in a partial `<think>` fragment.
+	if visible, _ := thinkExtractor.Flush(); visible != "" {
+		flushChunk := &apicompat.ChatCompletionsChunk{
+			Choices: []apicompat.ChatChunkChoice{{Delta: apicompat.ChatDelta{Content: &visible}}},
+		}
+		for _, evt := range apicompat.ChatCompletionsChunkToResponsesEvents(flushChunk, ccState) {
+			writeEvent(evt) //nolint:errcheck
+		}
+	}
+
 	finalEvents := apicompat.FinalizeChatCompletionsResponsesStream(ccState)
 	for _, evt := range finalEvents {
 		writeEvent(evt) //nolint:errcheck
@@ -466,4 +502,28 @@ func (s *GatewayService) handleResponsesStreamingFromCC(
 	c.Writer.Flush()
 
 	return resultWithUsage(), nil
+}
+
+// sanitizeChatChunkThinkTags rewrites each choice's delta.content in place so that
+// `<think>...</think>` reasoning is removed from the user-visible content before
+// the chunk is converted to Responses events. The extractor keeps cross-chunk
+// state, so think blocks split across chunk boundaries are handled correctly.
+//
+// Reasoning recovered from think tags is intentionally dropped (not converted to a
+// reasoning summary event) so it cannot appear anywhere in the user-visible
+// output_text stream. A chunk whose visible content becomes empty after stripping
+// yields an empty-string content delta, which the bridge skips — preserving any
+// tool-call / finish_reason / usage carried by the same chunk.
+func sanitizeChatChunkThinkTags(chunk *apicompat.ChatCompletionsChunk, extractor *apicompat.ThinkTagExtractor) {
+	if chunk == nil || extractor == nil {
+		return
+	}
+	for i := range chunk.Choices {
+		content := chunk.Choices[i].Delta.Content
+		if content == nil {
+			continue
+		}
+		visible, _ := extractor.Push(*content)
+		chunk.Choices[i].Delta.Content = &visible
+	}
 }
