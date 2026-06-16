@@ -300,10 +300,10 @@ func (h *GatewayHandler) CodingPlanResponses(c *gin.Context) {
 		if mappedModel != reqModel {
 			forwardBody = h.gatewayService.ReplaceModelInBody(body, mappedModel)
 		}
-		
+
 		var result *service.ForwardResult
 		result, err = h.gatewayService.ForwardCodexResponsesViaChatCompletions(requestCtx, c, account, forwardBody, parsedReq)
-		
+
 		if accountReleaseFunc != nil {
 			accountReleaseFunc()
 		}

@@ -18,15 +18,19 @@ const (
 
 // Platform constants
 const (
-	PlatformAnthropic   = "anthropic"
-	PlatformOpenAI      = "openai"
-	PlatformGemini      = "gemini"
-	PlatformAntigravity = "antigravity"
-	PlatformKimi        = "kimi"
-	PlatformZhipu       = "zhipu"
-	PlatformMiniMax     = "minimax"
-	PlatformVolcengine  = "volcengine"
-	PlatformMiMo        = "mimo"
+	PlatformAnthropic                 = "anthropic"
+	PlatformOpenAI                    = "openai"
+	PlatformGemini                    = "gemini"
+	PlatformAntigravity               = "antigravity"
+	PlatformKimi                      = "kimi"
+	PlatformZhipu                     = "zhipu"
+	PlatformMiniMax                   = "minimax"
+	PlatformVolcengine                = "volcengine"
+	PlatformMiMo                      = "mimo"
+	PlatformDomestic                  = "domestic"
+	PlatformDeepSeek                  = "deepseek"
+	PlatformCustomOpenAICompatible    = "custom_openai_compatible"
+	PlatformCustomAnthropicCompatible = "custom_anthropic_compatible"
 )
 
 // Account type constants

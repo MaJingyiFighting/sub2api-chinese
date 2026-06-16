@@ -492,11 +492,15 @@ export type GroupPlatform =
   | 'openai'
   | 'gemini'
   | 'antigravity'
+  | 'domestic'
   | 'kimi'
   | 'zhipu'
   | 'minimax'
   | 'volcengine'
   | 'mimo'
+  | 'deepseek'
+  | 'custom_openai_compatible'
+  | 'custom_anthropic_compatible'
 
 
 export type SubscriptionType = 'standard' | 'subscription'
@@ -710,13 +714,20 @@ export type AccountPlatform =
   | 'minimax'
   | 'volcengine'
   | 'mimo'
+  | 'domestic'
+  | 'deepseek'
+  | 'custom_openai_compatible'
+  | 'custom_anthropic_compatible'
 
 export const DOMESTIC_CODING_PLANS: AccountPlatform[] = [
   'kimi',
   'zhipu',
   'minimax',
   'volcengine',
-  'mimo'
+  'mimo',
+  'deepseek',
+  'custom_openai_compatible',
+  'custom_anthropic_compatible'
 ]
 export type AccountType = 'oauth' | 'setup-token' | 'apikey' | 'upstream' | 'bedrock' | 'service_account'
 export type OAuthAddMethod = 'oauth' | 'setup-token'

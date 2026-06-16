@@ -72,7 +72,7 @@ func RegisterGatewayRoutes(
 				h.OpenAIGateway.Responses(c)
 				return
 			}
-			if service.IsCodingPlanPlatform(platform) {
+			if service.IsCodexResponsesViaChatPlatform(platform) {
 				h.Gateway.CodingPlanResponses(c)
 				return
 			}
@@ -84,7 +84,7 @@ func RegisterGatewayRoutes(
 				h.OpenAIGateway.Responses(c)
 				return
 			}
-			if service.IsCodingPlanPlatform(platform) {
+			if service.IsCodexResponsesViaChatPlatform(platform) {
 				h.Gateway.CodingPlanResponses(c)
 				return
 			}
@@ -162,7 +162,7 @@ func RegisterGatewayRoutes(
 			h.OpenAIGateway.Responses(c)
 			return
 		}
-		if service.IsCodingPlanPlatform(platform) {
+		if service.IsCodexResponsesViaChatPlatform(platform) {
 			h.Gateway.CodingPlanResponses(c)
 			return
 		}

@@ -200,3 +200,37 @@ func TestValidateAccountGroupBinding_SameProviderGroupAllowed(t *testing.T) {
 	account := newDomesticVariantAccount(string(CodingPlanProviderKimi), "openai_chat")
 	require.NoError(t, svc.validateAccountGroupBinding(context.Background(), account, []int64{40}))
 }
+
+func TestValidateAccountGroupBinding_DomesticAggregateAllowsChatProviders(t *testing.T) {
+	svc := &adminServiceImpl{
+		groupRepo: &groupRepoStubForAdmin{
+			getByID: &Group{ID: 50, Name: "domestic-default", Platform: PlatformDomestic},
+		},
+	}
+	require.NoError(t, svc.validateAccountGroupBinding(context.Background(),
+		newDomesticVariantAccount(string(CodingPlanProviderZhipu), "openai_chat"), []int64{50}))
+
+	deepSeek := &Account{
+		ID:       2,
+		Platform: PlatformDeepSeek,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"base_url": "https://api.deepseek.com",
+			"api_key":  "sk-ds",
+			"wire_api": "openai_chat",
+		},
+	}
+	require.NoError(t, svc.validateAccountGroupBinding(context.Background(), deepSeek, []int64{50}))
+}
+
+func TestValidateAccountGroupBinding_PureKeyProvidersDoNotJoinOpenAIGroup(t *testing.T) {
+	svc := &adminServiceImpl{
+		groupRepo: &groupRepoStubForAdmin{
+			getByID: &Group{ID: 60, Name: "openai-default", Platform: PlatformOpenAI},
+		},
+	}
+	for _, platform := range []string{PlatformDeepSeek, PlatformCustomOpenAICompatible, PlatformCustomAnthropicCompatible} {
+		account := &Account{ID: 3, Platform: platform, Type: AccountTypeAPIKey}
+		require.Error(t, svc.validateAccountGroupBinding(context.Background(), account, []int64{60}), platform)
+	}
+}

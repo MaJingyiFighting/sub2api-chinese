@@ -97,10 +97,17 @@ const filteredGroups = computed(() => {
       result = result.filter(
         (g) => g.platform === 'antigravity' || g.platform === 'anthropic' || g.platform === 'gemini'
       )
-    } else if (isDomesticCodingPlanPlatform(props.platform)) {
+    } else if (
+      isDomesticCodingPlanPlatform(props.platform) &&
+      props.platform !== 'custom_anthropic_compatible'
+    ) {
       // 国内 Coding Plan：可选择本供应商分组（Chat/Codex 变体）以及 Anthropic
       // 分组（Anthropic 变体供 Claude Code 使用）。双账号创建时会按分组平台
       // 自动拆分到对应变体。
+      result = result.filter(
+        (g) => g.platform === props.platform || g.platform === 'domestic' || g.platform === 'anthropic'
+      )
+    } else if (props.platform === 'custom_anthropic_compatible') {
       result = result.filter((g) => g.platform === props.platform || g.platform === 'anthropic')
     } else {
       // 默认：只能选择同 platform 的分组
