@@ -19,6 +19,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/authidentitychannel"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/codingplan"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httpclient"
@@ -1745,7 +1746,7 @@ func (s *adminServiceImpl) GetGroupModelsListCandidates(ctx context.Context, id 
 		seen[model] = struct{}{}
 	}
 	for _, acc := range accounts {
-		if acc.Platform != platform {
+		if accountBindingPlatform(&acc) != platform {
 			continue
 		}
 		for model := range acc.GetModelMapping() {
@@ -1780,13 +1781,47 @@ func defaultModelsListCandidateIDs(platform string) []string {
 			ids = append(ids, model.ID)
 		}
 		return ids
+	case PlatformDomestic:
+		seen := map[string]struct{}{}
+		var ids []string
+		for _, provider := range []string{
+			string(CodingPlanProviderKimi),
+			string(CodingPlanProviderZhipu),
+			string(CodingPlanProviderMiniMax),
+			string(CodingPlanProviderVolcengine),
+			string(CodingPlanProviderMiMo),
+		} {
+			for _, model := range codingPlanModelIDs(codingplan.DefaultModelsForProvider(provider)) {
+				if _, ok := seen[model]; ok {
+					continue
+				}
+				seen[model] = struct{}{}
+				ids = append(ids, model)
+			}
+		}
+		ids = append(ids, "deepseek-chat", "deepseek-reasoner")
+		return ids
 	default:
+		if IsCodingPlanPlatform(platform) {
+			return codingPlanModelIDs(codingplan.DefaultModelsForProvider(platform))
+		}
 		ids := make([]string, 0, len(claude.DefaultModels))
 		for _, model := range claude.DefaultModels {
 			ids = append(ids, model.ID)
 		}
 		return ids
 	}
+}
+
+func codingPlanModelIDs(models []codingplan.Model) []string {
+	ids := make([]string, 0, len(models))
+	for _, model := range models {
+		id := strings.TrimSpace(model.ID)
+		if id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupInput) (*Group, error) {
@@ -2586,6 +2621,17 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 		}
 	}
 
+	if len(groupIDs) > 0 {
+		accountForBinding := &Account{
+			Platform:    input.Platform,
+			Credentials: input.Credentials,
+			Extra:       input.Extra,
+		}
+		if err := s.validateAccountGroupBinding(ctx, accountForBinding, groupIDs); err != nil {
+			return nil, err
+		}
+	}
+
 	// 检查混合渠道风险（除非用户已确认）
 	if len(groupIDs) > 0 && !input.SkipMixedChannelCheck {
 		if err := s.checkMixedChannelRisk(ctx, 0, input.Platform, groupIDs); err != nil {
@@ -2770,9 +2816,18 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		account.AutoPauseOnExpired = *input.AutoPauseOnExpired
 	}
 
+	// Validate the *merged* Coding Plan consistency. account.Credentials /
+	// account.Extra now hold the post-update state (credentials merged at line
+	// above; extra applied), so a partial update cannot bypass the domestic
+	// provider rules (e.g. swapping in a domestic base_url while keeping
+	// platform=openai, or setting a mismatched coding_plan_provider).
+	if err := ValidateCodingPlanAccountConsistency(account.Platform, account.Type, account.Credentials, account.Extra); err != nil {
+		return nil, err
+	}
+
 	// 先验证分组是否存在（在任何写操作之前）
 	if input.GroupIDs != nil {
-		if err := s.validateGroupIDsExist(ctx, *input.GroupIDs); err != nil {
+		if err := s.validateAccountGroupBinding(ctx, account, *input.GroupIDs); err != nil {
 			return nil, err
 		}
 
@@ -2839,17 +2894,30 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	}
 
 	needMixedChannelCheck := input.GroupIDs != nil && !input.SkipMixedChannelCheck
+	needAccountGroupBindingCheck := input.GroupIDs != nil
 
-	// 预加载账号平台信息（混合渠道检查需要）。
-	platformByID := map[int64]string{}
-	if needMixedChannelCheck {
+	// 预加载账号平台信息（混合渠道检查和分组平台绑定检查需要）。
+	accountsByID := map[int64]*Account{}
+	if needMixedChannelCheck || needAccountGroupBindingCheck {
 		accounts, err := s.accountRepo.GetByIDs(ctx, input.AccountIDs)
 		if err != nil {
 			return nil, err
 		}
 		for _, account := range accounts {
 			if account != nil {
-				platformByID[account.ID] = account.Platform
+				accountsByID[account.ID] = account
+			}
+		}
+	}
+
+	if needAccountGroupBindingCheck {
+		for _, accountID := range input.AccountIDs {
+			account := accountsByID[accountID]
+			if account == nil {
+				continue
+			}
+			if err := s.validateAccountGroupBinding(ctx, account, *input.GroupIDs); err != nil {
+				return nil, err
 			}
 		}
 	}
@@ -2857,11 +2925,11 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	// 预检查混合渠道风险：在任何写操作之前，若发现风险立即返回错误。
 	if needMixedChannelCheck {
 		for _, accountID := range input.AccountIDs {
-			platform := platformByID[accountID]
-			if platform == "" {
+			account := accountsByID[accountID]
+			if account == nil || account.Platform == "" {
 				continue
 			}
-			if err := s.checkMixedChannelRisk(ctx, accountID, platform, *input.GroupIDs); err != nil {
+			if err := s.checkMixedChannelRisk(ctx, accountID, account.Platform, *input.GroupIDs); err != nil {
 				return nil, err
 			}
 		}
@@ -2870,6 +2938,38 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	if input.RateMultiplier != nil {
 		if *input.RateMultiplier < 0 {
 			return nil, errors.New("rate_multiplier must be >= 0")
+		}
+	}
+
+	// Validate Coding Plan consistency on the *merged* state of every target
+	// account before any write. The repo merges credentials/extra keys, so a
+	// bulk update that injects a domestic base_url or coding_plan_provider must
+	// be checked against each account's post-merge platform/type — neither the
+	// account_ids path nor a domestic-platform filter may bypass it.
+	if len(input.Credentials) > 0 || len(input.Extra) > 0 {
+		accounts := accountsByID
+		if len(accounts) == 0 {
+			loaded, err := s.accountRepo.GetByIDs(ctx, input.AccountIDs)
+			if err != nil {
+				return nil, err
+			}
+			accounts = make(map[int64]*Account, len(loaded))
+			for _, account := range loaded {
+				if account != nil {
+					accounts[account.ID] = account
+				}
+			}
+		}
+		for _, accountID := range input.AccountIDs {
+			account := accounts[accountID]
+			if account == nil {
+				continue
+			}
+			mergedCreds := mergeCodingPlanValidationMap(account.Credentials, input.Credentials)
+			mergedExtra := mergeCodingPlanValidationMap(account.Extra, input.Extra)
+			if err := ValidateCodingPlanAccountConsistency(account.Platform, account.Type, mergedCreds, mergedExtra); err != nil {
+				return nil, fmt.Errorf("account %d: %w", accountID, err)
+			}
 		}
 	}
 
@@ -3732,6 +3832,88 @@ func (s *adminServiceImpl) validateGroupIDsExist(ctx context.Context, groupIDs [
 		}
 	}
 	return nil
+}
+
+func (s *adminServiceImpl) validateAccountGroupBinding(ctx context.Context, account *Account, groupIDs []int64) error {
+	if len(groupIDs) == 0 {
+		return nil
+	}
+	if s.groupRepo == nil {
+		return errors.New("group repository not configured")
+	}
+
+	accountPlatform := accountBindingPlatform(account)
+	for _, groupID := range groupIDs {
+		group, err := s.groupRepo.GetByID(ctx, groupID)
+		if err != nil {
+			return fmt.Errorf("get group: %w", err)
+		}
+		if group == nil || groupID <= 0 {
+			return fmt.Errorf("get group: %w", ErrGroupNotFound)
+		}
+		if !isAccountGroupBindingCompatible(account, accountPlatform, group.Platform) {
+			return fmt.Errorf("account platform %q cannot bind to group %d with platform %q", accountPlatform, groupID, group.Platform)
+		}
+	}
+	return nil
+}
+
+func accountBindingPlatform(account *Account) string {
+	if account == nil {
+		return ""
+	}
+	if provider := ResolveCodingPlanProvider(account); provider != "" {
+		return string(provider)
+	}
+	return strings.TrimSpace(account.Platform)
+}
+
+func accountCanUseDomesticAggregateGroup(account *Account, accountPlatform string) bool {
+	if account == nil {
+		return false
+	}
+	if IsCodingPlanPlatform(accountPlatform) || IsPureKeyDomesticPlatform(accountPlatform) {
+		return true
+	}
+	return false
+}
+
+// isAccountGroupBindingCompatible decides whether an account may join a group.
+//
+// Domestic Coding Plan accounts are isolated to their own provider's groups
+// (provider isolation — a kimi account cannot join a zhipu/openai group), with
+// one deliberate exception: the Anthropic variant of a domestic provider
+// (wire_api=anthropic_messages) MAY join an Anthropic-platform group so Claude
+// Code (/v1/messages) can use it. The Chat/Codex variant stays barred from
+// OpenAI/ChatGPT (and Anthropic) groups so domestic models never enter the
+// OpenAI official account pool.
+func isAccountGroupBindingCompatible(account *Account, accountPlatform, groupPlatform string) bool {
+	groupPlatform = strings.TrimSpace(groupPlatform)
+	if AccountSupportsNativeAnthropicMessages(account) && strings.TrimSpace(groupPlatform) == PlatformAnthropic {
+		return true
+	}
+	if groupPlatform == PlatformDomestic && accountCanUseDomesticAggregateGroup(account, accountPlatform) {
+		return true
+	}
+	if accountPlatform == PlatformDeepSeek || accountPlatform == PlatformCustomOpenAICompatible {
+		return groupPlatform == accountPlatform || groupPlatform == PlatformDomestic
+	}
+	if accountPlatform == PlatformCustomAnthropicCompatible {
+		return groupPlatform == accountPlatform || groupPlatform == PlatformAnthropic
+	}
+	return isAccountGroupPlatformCompatible(accountPlatform, groupPlatform)
+}
+
+func isAccountGroupPlatformCompatible(accountPlatform, groupPlatform string) bool {
+	accountPlatform = strings.TrimSpace(accountPlatform)
+	groupPlatform = strings.TrimSpace(groupPlatform)
+	if accountPlatform == "" || groupPlatform == "" || accountPlatform == groupPlatform {
+		return true
+	}
+	if IsCodingPlanPlatform(accountPlatform) || IsCodingPlanPlatform(groupPlatform) {
+		return false
+	}
+	return true
 }
 
 // CheckMixedChannelRisk checks whether target groups contain mixed channels for the current account platform.

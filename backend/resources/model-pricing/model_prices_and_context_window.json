@@ -1,4 +1,45 @@
 {
+  "MiniMax-M3": {
+    "cache_read_input_token_cost": 0.00000042,
+    "cache_read_input_token_cost_above_512k_tokens": 0.00000084,
+    "cache_read_input_token_cost_priority": 0.00000063,
+    "input_cost_per_token": 0.0000021,
+    "input_cost_per_token_above_512k_tokens": 0.0000042,
+    "input_cost_per_token_priority": 0.00000315,
+    "litellm_provider": "minimax",
+    "long_context_input_cost_multiplier": 2,
+    "long_context_input_token_threshold": 512000,
+    "long_context_output_cost_multiplier": 2,
+    "max_input_tokens": 1000000,
+    "mode": "chat",
+    "output_cost_per_token": 0.0000084,
+    "output_cost_per_token_above_512k_tokens": 0.0000168,
+    "output_cost_per_token_priority": 0.0000126,
+    "supports_function_calling": true,
+    "supports_prompt_caching": true,
+    "supports_reasoning": true,
+    "supports_service_tier": true
+  },
+  "MiniMax-M2.7": {
+    "cache_creation_input_token_cost": 0.000002625,
+    "cache_read_input_token_cost": 0.00000042,
+    "input_cost_per_token": 0.0000021,
+    "litellm_provider": "minimax",
+    "max_input_tokens": 200000,
+    "mode": "chat",
+    "output_cost_per_token": 0.0000084,
+    "supports_prompt_caching": true
+  },
+  "MiniMax-M2.7-highspeed": {
+    "cache_creation_input_token_cost": 0.000002625,
+    "cache_read_input_token_cost": 0.00000042,
+    "input_cost_per_token": 0.0000042,
+    "litellm_provider": "minimax",
+    "max_input_tokens": 200000,
+    "mode": "chat",
+    "output_cost_per_token": 0.0000168,
+    "supports_prompt_caching": true
+  },
   "claude-3-7-sonnet-20250219": {
     "cache_creation_input_token_cost": 3.75e-06,
     "cache_creation_input_token_cost_above_1hr": 6e-06,

@@ -103,6 +103,11 @@ type antigravityUsageCache struct {
 	timestamp time.Time
 }
 
+type codingPlanUsageCache struct {
+	usageInfo *UsageInfo
+	timestamp time.Time
+}
+
 const (
 	apiCacheTTL             = 3 * time.Minute
 	apiErrorCacheTTL        = 1 * time.Minute        // 负缓存 TTL：429 等错误缓存 1 分钟
@@ -118,8 +123,10 @@ type UsageCache struct {
 	apiCache          sync.Map           // accountID -> *apiUsageCache
 	windowStatsCache  sync.Map           // accountID -> *windowStatsCache
 	antigravityCache  sync.Map           // accountID -> *antigravityUsageCache
+	codingPlanCache   sync.Map           // accountID -> *codingPlanUsageCache
 	apiFlight         singleflight.Group // 防止同一账号的并发请求击穿缓存（Anthropic）
 	antigravityFlight singleflight.Group // 防止同一 Antigravity 账号的并发请求击穿缓存
+	codingPlanFlight  singleflight.Group // 防止同一 Coding Plan 账号的并发请求击穿缓存
 	openAIProbeCache  sync.Map           // accountID -> time.Time
 }
 
@@ -305,6 +312,14 @@ func (s *AccountUsageService) GetUsage(ctx context.Context, accountID int64, for
 
 	if account.Platform == PlatformOpenAI && account.Type == AccountTypeOAuth {
 		usage, err := s.getOpenAIUsage(ctx, account, forceProbe)
+		if err == nil {
+			s.tryClearRecoverableAccountError(ctx, account)
+		}
+		return usage, err
+	}
+
+	if IsCodingPlanAccount(account) {
+		usage, err := s.getCodingPlanUsage(ctx, account, forceProbe)
 		if err == nil {
 			s.tryClearRecoverableAccountError(ctx, account)
 		}
@@ -708,6 +723,151 @@ func mergeAccountExtra(account *Account, updates map[string]any) {
 	for k, v := range updates {
 		account.Extra[k] = v
 	}
+}
+
+func (s *AccountUsageService) getCodingPlanUsage(ctx context.Context, account *Account, force bool) (*UsageInfo, error) {
+	now := time.Now()
+	usage := &UsageInfo{UpdatedAt: &now, Source: "local_snapshot"}
+	if account == nil {
+		return usage, nil
+	}
+
+	if progress := buildCodingPlanUsageProgressFromExtra(account.Extra, "5h", now); progress != nil {
+		usage.FiveHour = progress
+	}
+	if progress := buildCodingPlanUsageProgressFromExtra(account.Extra, "weekly", now); progress != nil {
+		usage.SevenDay = progress
+	}
+	if errMsg := account.GetExtraString("coding_plan_probe_error"); errMsg != "" {
+		usage.Error = errMsg
+	}
+	if raw := account.GetExtraString("coding_plan_usage_updated_at"); raw != "" {
+		if updatedAt, err := parseTime(raw); err == nil {
+			usage.UpdatedAt = &updatedAt
+		}
+	}
+
+	if !force && (usage.FiveHour != nil || usage.SevenDay != nil) && !isCodingPlanSnapshotStale(account, now) {
+		return usage, nil
+	}
+	if !s.shouldProbeCodingPlanQuota(account.ID, now, force) {
+		return usage, nil
+	}
+
+	if s != nil && s.cache != nil && !force {
+		if cached, ok := s.cache.codingPlanCache.Load(account.ID); ok {
+			if cache, ok := cached.(*codingPlanUsageCache); ok && cache != nil && time.Since(cache.timestamp) < codingPlanUsageCacheTTL(cache.usageInfo) {
+				return cache.usageInfo, nil
+			}
+		}
+	}
+
+	if s == nil || s.cache == nil {
+		snapshot, err := ProbeCodingPlanQuota(ctx, account)
+		if snapshot != nil {
+			return buildUsageInfoFromCodingPlanSnapshot(snapshot, now), nil
+		}
+		return usage, err
+	}
+
+	flightKey := fmt.Sprintf("coding-plan-usage:%d", account.ID)
+	result, flightErr, _ := s.cache.codingPlanFlight.Do(flightKey, func() (any, error) {
+		if !force {
+			if cached, ok := s.cache.codingPlanCache.Load(account.ID); ok {
+				if cache, ok := cached.(*codingPlanUsageCache); ok && cache != nil && time.Since(cache.timestamp) < codingPlanUsageCacheTTL(cache.usageInfo) {
+					return cache.usageInfo, nil
+				}
+			}
+		}
+
+		probeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+		defer cancel()
+		snapshot, probeErr := ProbeCodingPlanQuota(probeCtx, account)
+		if snapshot != nil {
+			updates := buildCodingPlanQuotaExtraUpdates(snapshot)
+			if len(updates) > 0 {
+				mergeAccountExtra(account, updates)
+				s.persistCodingPlanQuotaSnapshot(account.ID, updates)
+			}
+			probedUsage := buildUsageInfoFromCodingPlanSnapshot(snapshot, now)
+			if probedUsage != nil {
+				if probedUsage.FiveHour == nil {
+					probedUsage.FiveHour = usage.FiveHour
+				}
+				if probedUsage.SevenDay == nil {
+					probedUsage.SevenDay = usage.SevenDay
+				}
+				s.cache.codingPlanCache.Store(account.ID, &codingPlanUsageCache{
+					usageInfo: probedUsage,
+					timestamp: time.Now(),
+				})
+				return probedUsage, nil
+			}
+		}
+		if probeErr != nil && usage.Error == "" {
+			usage.Error = probeErr.Error()
+		}
+		s.cache.codingPlanCache.Store(account.ID, &codingPlanUsageCache{
+			usageInfo: usage,
+			timestamp: time.Now(),
+		})
+		return usage, nil
+	})
+	if flightErr != nil {
+		return nil, flightErr
+	}
+	if info, ok := result.(*UsageInfo); ok && info != nil {
+		return info, nil
+	}
+	return usage, nil
+}
+
+func (s *AccountUsageService) shouldProbeCodingPlanQuota(accountID int64, now time.Time, force bool) bool {
+	if s == nil || s.cache == nil || accountID <= 0 {
+		return true
+	}
+	if !force {
+		if cached, ok := s.cache.openAIProbeCache.Load(accountID); ok {
+			if ts, ok := cached.(time.Time); ok && now.Sub(ts) < codingPlanQuotaProbeCacheTTL {
+				return false
+			}
+		}
+	}
+	s.cache.openAIProbeCache.Store(accountID, now)
+	return true
+}
+
+func isCodingPlanSnapshotStale(account *Account, now time.Time) bool {
+	if account == nil || account.Extra == nil {
+		return true
+	}
+	raw, ok := account.Extra["coding_plan_usage_updated_at"]
+	if !ok {
+		return true
+	}
+	ts, err := parseTime(fmt.Sprint(raw))
+	if err != nil {
+		return true
+	}
+	return now.Sub(ts) >= codingPlanQuotaProbeCacheTTL
+}
+
+func codingPlanUsageCacheTTL(info *UsageInfo) time.Duration {
+	if info == nil || info.Error != "" {
+		return apiErrorCacheTTL
+	}
+	return codingPlanQuotaProbeCacheTTL
+}
+
+func (s *AccountUsageService) persistCodingPlanQuotaSnapshot(accountID int64, updates map[string]any) {
+	if s == nil || s.accountRepo == nil || accountID <= 0 || len(updates) == 0 {
+		return
+	}
+	go func() {
+		updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = s.accountRepo.UpdateExtra(updateCtx, accountID, updates)
+	}()
 }
 
 func (s *AccountUsageService) getGeminiUsage(ctx context.Context, account *Account) (*UsageInfo, error) {

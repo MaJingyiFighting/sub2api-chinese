@@ -164,6 +164,12 @@ func (s *RateLimitService) CheckErrorPolicy(ctx context.Context, account *Accoun
 func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, requestedModel ...string) (shouldDisable bool) {
 	customErrorCodesEnabled := account.IsCustomErrorCodesEnabled()
 
+	if IsCodingPlanAccount(account) {
+		if handled := s.handleCodingPlanUpstreamError(ctx, account, statusCode, headers, responseBody); handled {
+			return true
+		}
+	}
+
 	// 池模式默认不标记本地账号状态；仅当用户显式配置自定义错误码时按本地策略处理。
 	if account.IsPoolMode() && !customErrorCodesEnabled {
 		slog.Info("pool_mode_error_skipped", "account_id", account.ID, "status_code", statusCode)
@@ -342,6 +348,18 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			s.handleCustomErrorCode(ctx, account, statusCode, msg)
 			shouldDisable = true
 		} else if statusCode >= 500 {
+			if IsPureKeyDomesticPlatform(account.Platform) {
+				until := time.Now().Add(time.Minute)
+				reason := fmt.Sprintf("%s temporary upstream error (%d)", account.Platform, statusCode)
+				s.notifyAccountSchedulingBlocked(account, until, "server_error")
+				if s.accountRepo != nil {
+					if err := s.accountRepo.SetTempUnschedulable(ctx, account.ID, until, reason); err != nil {
+						slog.Warn("pure_key_5xx_set_temp_unschedulable_failed", "account_id", account.ID, "error", err)
+					}
+				}
+				shouldDisable = true
+				break
+			}
 			// 未启用自定义错误码时：仅记录5xx错误
 			slog.Warn("account_upstream_error", "account_id", account.ID, "status_code", statusCode)
 			shouldDisable = false
@@ -819,6 +837,88 @@ func (s *RateLimitService) handleOpenAI403(ctx context.Context, account *Account
 		"threshold", openAI403DisableThreshold,
 	)
 	return true
+}
+
+func (s *RateLimitService) handleCodingPlanUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte) bool {
+	if s == nil || account == nil {
+		return false
+	}
+	provider := ResolveCodingPlanProvider(account)
+	if provider == "" {
+		return false
+	}
+	decision := ClassifyCodingPlanProviderError(provider, statusCode, headers, responseBody, account)
+	if !decision.AuthFailed && !decision.RateLimited && !decision.Overloaded && !decision.QuotaExhausted {
+		return false
+	}
+
+	if decision.AuthFailed {
+		msg := fmt.Sprintf("%s credential expired (%d): %s", provider, statusCode, strings.TrimSpace(extractUpstreamErrorMessage(responseBody)))
+		if strings.HasSuffix(msg, ": ") {
+			msg += "authentication failed"
+		}
+		if s.accountRepo != nil {
+			_ = s.accountRepo.UpdateExtra(ctx, account.ID, map[string]any{
+				"coding_plan_provider":       string(provider),
+				"coding_plan_account_status": "credential_expired",
+				"coding_plan_probe_error":    msg,
+				"coding_plan_source":         "error",
+				"coding_plan_success":        false,
+			})
+		}
+		s.handleAuthError(ctx, account, msg)
+		return true
+	}
+
+	if decision.TempUnschedulableUntil == nil {
+		return false
+	}
+	reason := fmt.Sprintf("%s %s (%d)", provider, decision.Reason, statusCode)
+	if decision.QuotaExhausted {
+		reason = fmt.Sprintf("%s quota exhausted (%d)", provider, statusCode)
+	}
+	if s.accountRepo != nil {
+		extraUpdates := map[string]any{
+			"coding_plan_provider":         string(provider),
+			"coding_plan_account_status":   decision.Reason,
+			"coding_plan_probe_error":      reason,
+			"coding_plan_source":           "error",
+			"coding_plan_success":          false,
+			"coding_plan_usage_updated_at": time.Now().UTC().Format(time.RFC3339),
+		}
+		// Persist the consecutive-429 streak so the next 429 escalates the
+		// backoff (1m → 2m → 5m → 10m → 15m). Cleared by a longer quiet window
+		// (see nextCodingPlanRateLimitStreak).
+		if decision.RateLimited && decision.RateLimitStreak > 0 {
+			extraUpdates["coding_plan_rate_limit_streak"] = decision.RateLimitStreak
+			extraUpdates["coding_plan_rate_limit_at"] = time.Now().UTC().Format(time.RFC3339)
+		}
+		_ = s.accountRepo.UpdateExtra(ctx, account.ID, extraUpdates)
+		if err := s.accountRepo.SetTempUnschedulable(ctx, account.ID, *decision.TempUnschedulableUntil, reason); err != nil {
+			slog.Warn("coding_plan_set_temp_unschedulable_failed", "account_id", account.ID, "provider", provider, "error", err)
+		}
+	}
+	s.notifyAccountSchedulingBlocked(account, *decision.TempUnschedulableUntil, decision.Reason)
+	slog.Warn("coding_plan_account_temp_unschedulable",
+		"account_id", account.ID,
+		"provider", provider,
+		"reason", decision.Reason,
+		"until", *decision.TempUnschedulableUntil,
+	)
+	return true
+}
+
+func (s *RateLimitService) markCodingPlanRequestSuccess(ctx context.Context, account *Account) {
+	if s == nil || s.accountRepo == nil || account == nil || !IsDomesticProviderPlatform(account.Platform) {
+		return
+	}
+	if parseExtraInt(account.Extra["coding_plan_rate_limit_streak"]) <= 0 {
+		return
+	}
+	_ = s.accountRepo.UpdateExtra(ctx, account.ID, map[string]any{
+		"coding_plan_rate_limit_streak": 0,
+		"coding_plan_rate_limit_at":     "",
+	})
 }
 
 // handleAntigravity403 处理 Antigravity 平台的 403 错误

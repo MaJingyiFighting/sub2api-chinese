@@ -40,6 +40,31 @@ Sub2API is an AI API gateway platform designed to distribute and manage API quot
 - **Admin Dashboard** - Web interface for monitoring and management
 - **External System Integration** - Embed external systems (e.g. ticketing) via iframe to extend the admin dashboard
 
+## Domestic Coding Plan Providers
+
+Kimi, Zhipu, MiniMax, Volcengine, and MiMo are treated as dedicated account platforms. New accounts should use `platform=kimi/zhipu/minimax/volcengine/mimo` instead of `platform=openai` with a domestic `base_url`.
+
+Quota probe support:
+
+- **Supported**: Kimi, Zhipu, MiniMax
+- **Passive error-based scheduling**: Volcengine, MiMo
+
+Volcengine and MiMo do not have verified public API-key quota endpoints in this
+codebase. Their accounts use normal sticky/load scheduling and react to
+upstream errors: `429` temporarily cools down the account and selects another
+one; `401/403` disables the account until an administrator fixes the key.
+
+Each domestic provider account stores one API key and, where available, both
+its OpenAI-compatible and Anthropic-compatible base URLs. The same physical
+account can therefore join its provider group, a `domestic` aggregate group,
+and an Anthropic group without duplicating quota or health state.
+
+Domestic `/v1/chat/completions` and `/v1/messages` requests are forwarded
+directly to the matching native provider endpoint. Codex `/v1/responses`
+conversion is intentionally kept out of the main service and is available as
+the optional independent router documented in
+[`backend/cmd/codex-router`](backend/cmd/codex-router/README.md).
+
 ## ❤️ Sponsors
 
 > [Want to appear here?](mailto:support@pincc.ai)

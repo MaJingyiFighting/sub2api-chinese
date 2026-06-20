@@ -67,15 +67,25 @@ func RegisterGatewayRoutes(
 		gateway.GET("/usage", h.Gateway.Usage)
 		// OpenAI Responses API: auto-route based on group platform
 		gateway.POST("/responses", func(c *gin.Context) {
-			if getGroupPlatform(c) == service.PlatformOpenAI {
+			platform := getGroupPlatform(c)
+			if platform == service.PlatformOpenAI {
 				h.OpenAIGateway.Responses(c)
+				return
+			}
+			if service.RequiresExternalResponsesRouter(platform) {
+				writeResponsesRouterRequired(c)
 				return
 			}
 			h.Gateway.Responses(c)
 		})
 		gateway.POST("/responses/*subpath", func(c *gin.Context) {
-			if getGroupPlatform(c) == service.PlatformOpenAI {
+			platform := getGroupPlatform(c)
+			if platform == service.PlatformOpenAI {
 				h.OpenAIGateway.Responses(c)
+				return
+			}
+			if service.RequiresExternalResponsesRouter(platform) {
+				writeResponsesRouterRequired(c)
 				return
 			}
 			h.Gateway.Responses(c)
@@ -83,7 +93,8 @@ func RegisterGatewayRoutes(
 		gateway.GET("/responses", h.OpenAIGateway.ResponsesWebSocket)
 		// OpenAI Chat Completions API: auto-route based on group platform
 		gateway.POST("/chat/completions", func(c *gin.Context) {
-			if getGroupPlatform(c) == service.PlatformOpenAI {
+			platform := getGroupPlatform(c)
+			if platform == service.PlatformOpenAI || service.IsDomesticProviderPlatform(platform) || service.IsDomesticAggregatePlatform(platform) {
 				h.OpenAIGateway.ChatCompletions(c)
 				return
 			}
@@ -147,8 +158,13 @@ func RegisterGatewayRoutes(
 
 	// OpenAI Responses API（不带v1前缀的别名）— auto-route based on group platform
 	responsesHandler := func(c *gin.Context) {
-		if getGroupPlatform(c) == service.PlatformOpenAI {
+		platform := getGroupPlatform(c)
+		if platform == service.PlatformOpenAI {
 			h.OpenAIGateway.Responses(c)
+			return
+		}
+		if service.RequiresExternalResponsesRouter(platform) {
+			writeResponsesRouterRequired(c)
 			return
 		}
 		h.Gateway.Responses(c)
@@ -253,4 +269,14 @@ func getGroupPlatform(c *gin.Context) string {
 		return ""
 	}
 	return apiKey.Group.Platform
+}
+
+func writeResponsesRouterRequired(c *gin.Context) {
+	service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
+	c.JSON(http.StatusNotImplemented, gin.H{
+		"error": gin.H{
+			"type":    "unsupported_endpoint",
+			"message": "This group does not provide /v1/responses directly; use the optional codex-router sidecar.",
+		},
+	})
 }

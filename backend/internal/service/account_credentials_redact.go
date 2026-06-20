@@ -10,6 +10,7 @@ var SensitiveCredentialKeys = []string{
 	// 云服务凭据
 	"aws_secret_access_key", "aws_session_token",
 	"service_account_json", "service_account", "private_key",
+	"volcengine_secret_access_key",
 }
 
 var sensitiveCredentialKeySet = func() map[string]struct{} {

@@ -61,6 +61,7 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GroupBadge from './GroupBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
+import { isDomesticCodingPlanPlatform } from '@/components/account/domesticCodingPlan'
 import type { AdminGroup, GroupPlatform } from '@/types'
 
 const { t } = useI18n()
@@ -95,6 +96,19 @@ const filteredGroups = computed(() => {
     if (props.platform === 'antigravity' && props.mixedScheduling) {
       result = result.filter(
         (g) => g.platform === 'antigravity' || g.platform === 'anthropic' || g.platform === 'gemini'
+      )
+    } else if (
+      isDomesticCodingPlanPlatform(props.platform) &&
+      props.platform !== 'custom_anthropic_compatible'
+    ) {
+      // 国内账号：同一个物理账号可绑定供应商分组、国内聚合分组和
+      // Anthropic 分组；实际请求仍按入站协议选择对应的原生端点。
+      result = result.filter(
+        (g) => g.platform === props.platform || g.platform === 'domestic' || g.platform === 'anthropic'
+      )
+    } else if (props.platform === 'custom_anthropic_compatible') {
+      result = result.filter(
+        (g) => g.platform === props.platform || g.platform === 'domestic' || g.platform === 'anthropic'
       )
     } else {
       // 默认：只能选择同 platform 的分组

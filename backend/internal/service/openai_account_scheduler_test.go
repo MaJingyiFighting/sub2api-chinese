@@ -57,6 +57,32 @@ func (r schedulerTestOpenAIAccountRepo) ListSchedulableUngroupedByPlatform(ctx c
 	return r.ListSchedulableByPlatform(ctx, platform)
 }
 
+func (r schedulerTestOpenAIAccountRepo) ListSchedulableByGroupIDAndPlatforms(ctx context.Context, groupID int64, platforms []string) ([]Account, error) {
+	return r.listByPlatforms(platforms), nil
+}
+
+func (r schedulerTestOpenAIAccountRepo) ListSchedulableByPlatforms(ctx context.Context, platforms []string) ([]Account, error) {
+	return r.listByPlatforms(platforms), nil
+}
+
+func (r schedulerTestOpenAIAccountRepo) ListSchedulableUngroupedByPlatforms(ctx context.Context, platforms []string) ([]Account, error) {
+	return r.listByPlatforms(platforms), nil
+}
+
+func (r schedulerTestOpenAIAccountRepo) listByPlatforms(platforms []string) []Account {
+	allowed := make(map[string]struct{}, len(platforms))
+	for _, platform := range platforms {
+		allowed[platform] = struct{}{}
+	}
+	var result []Account
+	for _, account := range r.accounts {
+		if _, ok := allowed[account.Platform]; ok {
+			result = append(result, account)
+		}
+	}
+	return result
+}
+
 type schedulerGroupAwareOpenAIAccountRepo struct {
 	schedulerTestOpenAIAccountRepo
 }
@@ -467,6 +493,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultDisabled_Embeddi
 		OpenAIUpstreamTransportHTTPSSE,
 		OpenAIEndpointCapabilityEmbeddings,
 		false,
+		"",
 	)
 	require.NoError(t, err)
 	require.NotNil(t, selection)
@@ -591,6 +618,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_Enabled_EmbeddingsSkips
 		OpenAIUpstreamTransportHTTPSSE,
 		OpenAIEndpointCapabilityEmbeddings,
 		false,
+		"",
 	)
 	require.NoError(t, err)
 	require.NotNil(t, selection)
@@ -664,6 +692,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_Enabled_EmbeddingsSkips
 		OpenAIUpstreamTransportHTTPSSE,
 		OpenAIEndpointCapabilityEmbeddings,
 		false,
+		"",
 	)
 	require.NoError(t, err)
 	require.NotNil(t, selection)
@@ -1981,6 +2010,75 @@ func TestOpenAIGatewayService_OpenAIAccountSchedulerMetrics(t *testing.T) {
 	require.GreaterOrEqual(t, snapshot.SchedulerLatencyMsAvg, float64(0))
 	require.GreaterOrEqual(t, snapshot.StickyHitRatio, 0.0)
 	require.GreaterOrEqual(t, snapshot.RuntimeStatsAccountCount, 1)
+}
+
+func TestOpenAIGatewayService_DomesticAggregateSelectsNativeProviderByModel(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+	ctx := context.Background()
+	groupID := int64(88)
+	accounts := []Account{
+		{
+			ID:          8801,
+			Platform:    string(CodingPlanProviderKimi),
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 2,
+			Credentials: map[string]any{
+				"base_url":      "https://api.kimi.com/coding/v1",
+				"api_key":       "kimi-key",
+				"model_mapping": map[string]any{"kimi-for-coding": "kimi-for-coding"},
+			},
+		},
+		{
+			ID:          8802,
+			Platform:    string(CodingPlanProviderMiniMax),
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 2,
+			Credentials: map[string]any{
+				"base_url":      "https://api.minimaxi.com/v1",
+				"api_key":       "minimax-key",
+				"model_mapping": map[string]any{"MiniMax-M3": "MiniMax-M3"},
+			},
+		},
+		{
+			ID:          8803,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 2,
+		},
+	}
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: accounts},
+		cache:              &schedulerTestGatewayCache{},
+		cfg:                &config.Config{},
+		rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true"),
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+	}
+
+	selection, _, err := svc.SelectAccountWithSchedulerForCapability(
+		ctx,
+		&groupID,
+		"",
+		"domestic-session",
+		"MiniMax-M3",
+		nil,
+		OpenAIUpstreamTransportAny,
+		OpenAIEndpointCapabilityChatCompletions,
+		false,
+		PlatformDomestic,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.Equal(t, int64(8802), selection.Account.ID)
+	require.Equal(t, string(CodingPlanProviderMiniMax), selection.Account.Platform)
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
 }
 
 func intPtrForTest(v int) *int {

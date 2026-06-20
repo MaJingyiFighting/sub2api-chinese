@@ -20,6 +20,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/codingplan"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
@@ -525,6 +526,11 @@ func (h *AccountHandler) Create(c *gin.Context) {
 	// base_rpm 输入校验：负值归零，超过 10000 截断
 	sanitizeExtraBaseRPM(req.Extra)
 
+	if err := validateCodingPlanProvider(req.Platform, req.Type, req.Credentials, req.Extra); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
 	// 确定是否跳过混合渠道检查
 	skipCheck := req.ConfirmMixedChannelRisk != nil && *req.ConfirmMixedChannelRisk
 
@@ -609,10 +615,25 @@ func (h *AccountHandler) Update(c *gin.Context) {
 	// base_rpm 输入校验：负值归零，超过 10000 截断
 	sanitizeExtraBaseRPM(req.Extra)
 
+	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	effectiveType := account.Type
+	if strings.TrimSpace(req.Type) != "" {
+		effectiveType = req.Type
+	}
+	if err := validateCodingPlanProvider(account.Platform, effectiveType, req.Credentials, req.Extra); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
 	// 确定是否跳过混合渠道检查
 	skipCheck := req.ConfirmMixedChannelRisk != nil && *req.ConfirmMixedChannelRisk
 
-	account, err := h.adminService.UpdateAccount(c.Request.Context(), accountID, &service.UpdateAccountInput{
+	account, err = h.adminService.UpdateAccount(c.Request.Context(), accountID, &service.UpdateAccountInput{
 		Name:                  req.Name,
 		Notes:                 req.Notes,
 		Type:                  req.Type,
@@ -1320,6 +1341,13 @@ func (h *AccountHandler) BatchCreate(c *gin.Context) {
 		return
 	}
 
+	for _, acc := range req.Accounts {
+		if err := validateCodingPlanProvider(acc.Platform, acc.Type, acc.Credentials, acc.Extra); err != nil {
+			response.BadRequest(c, err.Error())
+			return
+		}
+	}
+
 	executeAdminIdempotentJSON(c, "admin.accounts.batch_create", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
 		success := 0
 		failed := 0
@@ -1553,6 +1581,12 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 	if !hasUpdates {
 		response.BadRequest(c, "No updates provided")
 		return
+	}
+	if req.Filters != nil && req.Filters.Platform == service.PlatformOpenAI {
+		if err := validateCodingPlanProvider(service.PlatformOpenAI, req.Filters.Type, req.Credentials, req.Extra); err != nil {
+			response.BadRequest(c, err.Error())
+			return
+		}
 	}
 
 	result, err := h.adminService.BulkUpdateAccounts(c.Request.Context(), &service.BulkUpdateAccountsInput{
@@ -2063,6 +2097,45 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 		return
 	}
 
+	// Handle Domestic Coding Plan Providers
+	if service.IsCodingPlanAccount(account) {
+		// 国产 Coding Plan 账号必须返回供应商自己的模型清单，而不是 Claude
+		// 默认模型——后者会让映射编辑器把目标模型引向 claude-* 名字。
+		// 优先返回 model_mapping 的 keys（用户已显式声明可用模型）；
+		// 没有映射时回落到该供应商的内置默认列表（Volcengine/MiMo 可能为空）。
+		provider := string(service.ResolveCodingPlanProvider(account))
+		defaults := codingPlanUpstreamModels(codingplan.DefaultModelsForProvider(provider))
+		mapping := account.GetModelMapping()
+		if len(mapping) == 0 {
+			response.Success(c, defaults)
+			return
+		}
+		defaultsByID := make(map[string]codingplan.Model, len(defaults))
+		for _, m := range defaults {
+			defaultsByID[m.ID] = m
+		}
+		models := make([]codingplan.Model, 0, len(mapping))
+		for requestedModel, upstreamModel := range mapping {
+			if dm, ok := defaultsByID[requestedModel]; ok {
+				dm.RequestModel = requestedModel
+				dm.UpstreamModel = upstreamModel
+				dm.ModelRole = "request"
+				models = append(models, dm)
+				continue
+			}
+			models = append(models, codingplan.Model{
+				ID:            requestedModel,
+				Type:          "model",
+				DisplayName:   fmt.Sprintf("%s -> %s", requestedModel, upstreamModel),
+				RequestModel:  requestedModel,
+				UpstreamModel: upstreamModel,
+				ModelRole:     "request",
+			})
+		}
+		response.Success(c, models)
+		return
+	}
+
 	// Handle Claude/Anthropic accounts
 	// For OAuth and Setup-Token accounts: return default models
 	if account.IsOAuth() {
@@ -2102,6 +2175,16 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 	}
 
 	response.Success(c, models)
+}
+
+func codingPlanUpstreamModels(models []codingplan.Model) []codingplan.Model {
+	out := make([]codingplan.Model, len(models))
+	for i, model := range models {
+		out[i] = model
+		out[i].UpstreamModel = model.ID
+		out[i].ModelRole = "upstream"
+	}
+	return out
 }
 
 // SyncUpstreamModels handles syncing live supported models from an account's upstream.
@@ -2408,8 +2491,15 @@ func (h *AccountHandler) GetAntigravityDefaultModelMapping(c *gin.Context) {
 	response.Success(c, domain.DefaultAntigravityModelMapping)
 }
 
-// sanitizeExtraBaseRPM 对 extra map 中的 base_rpm 值进行范围校验和归一化。
-// 负值归零，超过 10000 截断为 10000。extra 为 nil 或不含 base_rpm 时无操作。
+// validateCodingPlanProvider 校验 Coding Plan 供应商账号的平台/类型/供应商一致性。
+//
+// 这是 create 入口的快速校验；update / bulk-update 在 service 层对“合并后的
+// 最终态”再次校验（见 service.ValidateCodingPlanAccountConsistency），两者复用
+// 同一份规则，避免逻辑分叉，也避免部分更新绕过。
+func validateCodingPlanProvider(platform, typ string, credentials, extra map[string]any) error {
+	return service.ValidateCodingPlanAccountConsistency(platform, typ, credentials, extra)
+}
+
 func sanitizeExtraBaseRPM(extra map[string]any) {
 	if extra == nil {
 		return

@@ -19,6 +19,35 @@
   <svg v-else-if="platform === 'antigravity'" :class="sizeClass" viewBox="0 0 24 24" fill="currentColor">
     <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" />
   </svg>
+  <!-- Kimi logo (K) -->
+  <svg v-else-if="platform === 'kimi'" :class="sizeClass" viewBox="0 0 24 24" fill="currentColor">
+    <text x="50%" y="50%" font-size="16" font-weight="bold" text-anchor="middle" dominant-baseline="central">K</text>
+  </svg>
+  <!-- Zhipu logo (Z) -->
+  <svg v-else-if="platform === 'zhipu'" :class="sizeClass" viewBox="0 0 24 24" fill="currentColor">
+    <text x="50%" y="50%" font-size="16" font-weight="bold" text-anchor="middle" dominant-baseline="central">Z</text>
+  </svg>
+  <!-- MiniMax logo (M) -->
+  <svg v-else-if="platform === 'minimax'" :class="sizeClass" viewBox="0 0 24 24" fill="currentColor">
+    <text x="50%" y="50%" font-size="16" font-weight="bold" text-anchor="middle" dominant-baseline="central">M</text>
+  </svg>
+  <!-- Volcengine logo (V) -->
+  <svg v-else-if="platform === 'volcengine'" :class="sizeClass" viewBox="0 0 24 24" fill="currentColor">
+    <text x="50%" y="50%" font-size="16" font-weight="bold" text-anchor="middle" dominant-baseline="central">V</text>
+  </svg>
+  <!-- MiMo logo (M) -->
+  <svg v-else-if="platform === 'mimo'" :class="sizeClass" viewBox="0 0 24 24" fill="currentColor">
+    <text x="50%" y="50%" font-size="16" font-weight="bold" text-anchor="middle" dominant-baseline="central">M</text>
+  </svg>
+  <svg v-else-if="platform === 'deepseek'" :class="sizeClass" viewBox="0 0 24 24" fill="currentColor">
+    <text x="50%" y="50%" font-size="16" font-weight="bold" text-anchor="middle" dominant-baseline="central">D</text>
+  </svg>
+  <svg v-else-if="platform === 'domestic'" :class="sizeClass" viewBox="0 0 24 24" fill="currentColor">
+    <text x="50%" y="50%" font-size="16" font-weight="bold" text-anchor="middle" dominant-baseline="central">CN</text>
+  </svg>
+  <svg v-else-if="platform === 'custom_openai_compatible' || platform === 'custom_anthropic_compatible'" :class="sizeClass" viewBox="0 0 24 24" fill="currentColor">
+    <text x="50%" y="50%" font-size="14" font-weight="bold" text-anchor="middle" dominant-baseline="central">C</text>
+  </svg>
   <!-- Fallback: generic platform icon -->
   <svg v-else :class="sizeClass" fill="currentColor" viewBox="0 0 24 24">
     <path
@@ -29,10 +58,10 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { GroupPlatform } from '@/types'
+import type { AccountPlatform } from '@/types'
 
 interface Props {
-  platform?: GroupPlatform
+  platform?: AccountPlatform
   size?: 'xs' | 'sm' | 'md' | 'lg'
 }
 

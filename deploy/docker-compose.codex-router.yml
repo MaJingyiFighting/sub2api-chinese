@@ -1,0 +1,26 @@
+services:
+  codex-router:
+    build:
+      context: ../backend
+      dockerfile: cmd/codex-router/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${CODEX_ROUTER_PORT:-8089}:8089"
+    environment:
+      CODEX_ROUTER_LISTEN: ":8089"
+      CODEX_ROUTER_UPSTREAM_BASE_URL: "${CODEX_ROUTER_UPSTREAM_BASE_URL:-http://sub2api:8080}"
+      CODEX_ROUTER_API_KEY: "${CODEX_ROUTER_API_KEY:-}"
+      CODEX_ROUTER_MODEL_MAPPING: "${CODEX_ROUTER_MODEL_MAPPING:-{}}"
+      CODEX_ROUTER_UPSTREAM_TIMEOUT: "${CODEX_ROUTER_UPSTREAM_TIMEOUT:-10m}"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8089/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+    networks:
+      - sub2api-network
+
+networks:
+  sub2api-network:
+    external: true
+    name: "${SUB2API_DOCKER_NETWORK:-sub2api_default}"

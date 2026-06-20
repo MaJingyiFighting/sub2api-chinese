@@ -2442,6 +2442,18 @@ func (s *GatewayService) resolvePlatform(ctx context.Context, groupID *int64, gr
 func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *int64, platform string, hasForcePlatform bool) ([]Account, bool, error) {
 	if s.schedulerSnapshot != nil {
 		accounts, useMixed, err := s.schedulerSnapshot.ListSchedulableAccounts(ctx, groupID, platform, hasForcePlatform)
+		if err == nil && (platform == PlatformDomestic || platform == PlatformAnthropic || IsDomesticProviderPlatform(platform)) {
+			filtered := make([]Account, 0, len(accounts))
+			for i := range accounts {
+				account := &accounts[i]
+				if account.Platform == PlatformAnthropic ||
+					(account.Platform == PlatformAntigravity && account.IsMixedSchedulingEnabled()) ||
+					AccountSupportsNativeAnthropicMessages(account) {
+					filtered = append(filtered, *account)
+				}
+			}
+			accounts = filtered
+		}
 		if err == nil {
 			slog.Debug("account_scheduling_list_snapshot",
 				"group_id", derefGroupID(groupID),
@@ -2465,6 +2477,9 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 	useMixed := (platform == PlatformAnthropic || platform == PlatformGemini) && !hasForcePlatform
 	if useMixed {
 		platforms := []string{platform, PlatformAntigravity}
+		if platform == PlatformAnthropic {
+			platforms = AnthropicCompatibleSchedulingPlatforms()
+		}
 		var accounts []Account
 		var err error
 		if groupID != nil {
@@ -2484,6 +2499,10 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 		filtered := make([]Account, 0, len(accounts))
 		for _, acc := range accounts {
 			if acc.Platform == PlatformAntigravity && !acc.IsMixedSchedulingEnabled() {
+				continue
+			}
+			if platform == PlatformAnthropic && acc.Platform != PlatformAnthropic && acc.Platform != PlatformAntigravity &&
+				!AccountSupportsNativeAnthropicMessages(&acc) {
 				continue
 			}
 			filtered = append(filtered, acc)
@@ -2509,6 +2528,26 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 
 	var accounts []Account
 	var err error
+	if platform == PlatformDomestic {
+		platforms := DomesticSchedulingPlatforms()
+		if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
+			accounts, err = s.accountRepo.ListSchedulableByPlatforms(ctx, platforms)
+		} else if groupID != nil {
+			accounts, err = s.accountRepo.ListSchedulableByGroupIDAndPlatforms(ctx, *groupID, platforms)
+		} else {
+			accounts, err = s.accountRepo.ListSchedulableUngroupedByPlatforms(ctx, platforms)
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		filtered := make([]Account, 0, len(accounts))
+		for i := range accounts {
+			if AccountSupportsNativeAnthropicMessages(&accounts[i]) {
+				filtered = append(filtered, accounts[i])
+			}
+		}
+		return filtered, false, nil
+	}
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
 		accounts, err = s.accountRepo.ListSchedulableByPlatform(ctx, platform)
 	} else if groupID != nil {
@@ -2561,9 +2600,15 @@ func (s *GatewayService) isAccountAllowedForPlatform(account *Account, platform 
 		if account.Platform == platform {
 			return true
 		}
-		return account.Platform == PlatformAntigravity && account.IsMixedSchedulingEnabled()
+		if account.Platform == PlatformAntigravity {
+			return account.IsMixedSchedulingEnabled()
+		}
+		return platform == PlatformAnthropic && AccountSupportsNativeAnthropicMessages(account)
 	}
-	return account.Platform == platform
+	if IsDomesticProviderPlatform(platform) {
+		return strings.EqualFold(account.Platform, platform) && AccountSupportsNativeAnthropicMessages(account)
+	}
+	return IsAccountCompatibleWithSchedulingPlatform(account, platform)
 }
 
 func (s *GatewayService) isAccountSchedulableForSelection(account *Account) bool {
@@ -5726,6 +5771,10 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 		return s.handleErrorResponse(ctx, resp, c, account, input.RequestModel)
 	}
 
+	if s.rateLimitService != nil {
+		s.rateLimitService.markCodingPlanRequestSuccess(ctx, account)
+	}
+
 	var usage *ClaudeUsage
 	var firstTokenMs *int
 	var clientDisconnect bool
@@ -5810,7 +5859,11 @@ func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
 	req.Header.Del("x-api-key")
 	req.Header.Del("x-goog-api-key")
 	req.Header.Del("cookie")
-	setHeaderRaw(req.Header, "x-api-key", token)
+	if account.GetAnthropicAPIKeyAuthMode() == "bearer" {
+		setHeaderRaw(req.Header, "authorization", "Bearer "+token)
+	} else {
+		setHeaderRaw(req.Header, "x-api-key", token)
+	}
 
 	if getHeaderRaw(req.Header, "content-type") == "" {
 		setHeaderRaw(req.Header, "content-type", "application/json")
@@ -10137,7 +10190,11 @@ func (s *GatewayService) buildCountTokensRequestAnthropicAPIKeyPassthrough(
 	req.Header.Del("x-api-key")
 	req.Header.Del("x-goog-api-key")
 	req.Header.Del("cookie")
-	req.Header.Set("x-api-key", token)
+	if account.GetAnthropicAPIKeyAuthMode() == "bearer" {
+		req.Header.Set("authorization", "Bearer "+token)
+	} else {
+		req.Header.Set("x-api-key", token)
+	}
 
 	if req.Header.Get("content-type") == "" {
 		req.Header.Set("content-type", "application/json")

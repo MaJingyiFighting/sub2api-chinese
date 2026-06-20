@@ -471,7 +471,21 @@ func (r *accountRepository) ListWithFilters(ctx context.Context, params paginati
 	q := r.client.Account.Query()
 
 	if platform != "" {
-		q = q.Where(dbaccount.PlatformEQ(platform))
+		if platform == "kimi" || platform == "zhipu" || platform == "minimax" || platform == "volcengine" || platform == "mimo" {
+			q = q.Where(
+				dbaccount.Or(
+					dbaccount.PlatformEQ(platform),
+					dbaccount.And(
+						dbaccount.PlatformEQ(service.PlatformOpenAI),
+						dbpredicate.Account(func(s *entsql.Selector) {
+							s.Where(entsql.ExprP("extra->>'coding_plan_provider' = ?", platform))
+						}),
+					),
+				),
+			)
+		} else {
+			q = q.Where(dbaccount.PlatformEQ(platform))
+		}
 	}
 	if accountType != "" {
 		q = q.Where(dbaccount.TypeEQ(accountType))

@@ -105,9 +105,27 @@
       <div v-else class="text-xs text-gray-400">-</div>
     </template>
 
-    <!-- OpenAI OAuth accounts: single source from /usage API -->
-    <template v-else-if="account.platform === 'openai' && account.type === 'oauth'">
-      <div v-if="hasOpenAIUsageFallback" class="space-y-1">
+    <!-- OpenAI OAuth and Coding Plan API Key accounts: single source from /usage API -->
+    <template v-else-if="(account.platform === 'openai' || isDomesticCodingPlanPlatform(account.platform)) && (account.type === 'oauth' || isCodingPlanAccount)">
+      <div v-if="loading" class="space-y-1.5">
+        <div class="flex items-center gap-1">
+          <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
+          <div class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"></div>
+          <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
+        </div>
+        <div class="flex items-center gap-1">
+          <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
+          <div class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"></div>
+          <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
+        </div>
+      </div>
+      <div v-else class="space-y-1">
+        <!-- Error Display -->
+        <div v-if="usageInfo?.error" class="text-xs text-amber-600 dark:text-amber-400 truncate max-w-[200px]" :title="usageInfo.error">
+          {{ usageInfo.error }}
+        </div>
+
+        <!-- Usage Bars -->
         <UsageProgressBar
           v-if="usageInfo?.five_hour"
           label="5h"
@@ -126,12 +144,45 @@
           :show-now-when-idle="true"
           color="emerald"
         />
+        <div v-if="!hasOpenAIUsageFallback && !usageInfo?.error" class="text-xs text-gray-400">-</div>
+
+        <div v-if="isCodingPlanAccount" class="flex items-center gap-1.5 mt-0.5">
+          <button
+            type="button"
+            class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+            :disabled="activeQueryLoading"
+            @click="loadActiveUsage"
+          >
+            <svg
+              class="h-2.5 w-2.5"
+              :class="{ 'animate-spin': activeQueryLoading }"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+              />
+            </svg>
+            {{ t('admin.accounts.usageWindow.activeQuery') }}
+          </button>
+          <span
+            class="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+            :title="codingPlanProbeStatusLabel"
+          >
+            {{ codingPlanProviderLabel }} · {{ codingPlanProbeStatusLabel }}
+          </span>
+        </div>
+
         <!--
           Upstream codex /wham/usage quota query + reset. The local active-sampling
           refresh button is rendered via the pre-actions slot so the user sees a
           single row of related buttons instead of two stacked rows.
         -->
-        <OpenAIQuotaResetCell :account="account">
+        <OpenAIQuotaResetCell v-else :account="account">
           <template #pre-actions>
             <button
               type="button"
@@ -157,23 +208,6 @@
             </button>
           </template>
         </OpenAIQuotaResetCell>
-      </div>
-      <div v-else-if="loading" class="space-y-1.5">
-        <div class="flex items-center gap-1">
-          <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
-          <div class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"></div>
-          <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
-        </div>
-        <div class="flex items-center gap-1">
-          <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
-          <div class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"></div>
-          <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
-        </div>
-      </div>
-      <div v-else>
-        <div class="text-xs text-gray-400">-</div>
-        <!-- Always allow on-demand upstream quota query, even before local data exists. -->
-        <OpenAIQuotaResetCell :account="account" class="mt-1" />
       </div>
     </template>
 
@@ -499,7 +533,7 @@
       />
 
       <!-- No data at all -->
-      <div v-if="!todayStats && !todayStatsLoading && !hasApiKeyQuota" class="text-xs text-gray-400">-</div>
+      <div v-if="!todayStats && !todayStatsLoading && !hasApiKeyQuota && !isCodingPlanAccount" class="text-xs text-gray-400">-</div>
     </div>
   </div>
 </template>
@@ -560,8 +594,12 @@ let visibilityObserver: IntersectionObserver | null = null
 const showUsageWindows = computed(() => {
   // Gemini: we can always compute local usage windows from DB logs (simulated quotas).
   if (props.account.platform === 'gemini') return true
+  if (isCodingPlanAccount.value) return true
   return props.account.type === 'oauth' || props.account.type === 'setup-token'
 })
+
+const isDomesticCodingPlanPlatform = (platform: string) =>
+  ['kimi', 'zhipu', 'minimax', 'volcengine', 'mimo'].includes(platform)
 
 const shouldFetchUsage = computed(() => {
   if (props.account.platform === 'anthropic') {
@@ -573,10 +611,46 @@ const shouldFetchUsage = computed(() => {
   if (props.account.platform === 'antigravity') {
     return props.account.type === 'oauth'
   }
-  if (props.account.platform === 'openai') {
-    return props.account.type === 'oauth'
+  if (props.account.platform === 'openai' || isDomesticCodingPlanPlatform(props.account.platform)) {
+    return props.account.type === 'oauth' || isCodingPlanAccount.value
   }
   return false
+})
+
+const detectCodingPlanProviderFromAccount = (account: Account): string => {
+  const extra = account.extra as Record<string, unknown> | undefined
+  const explicit = typeof extra?.coding_plan_provider === 'string' ? extra.coding_plan_provider.trim() : ''
+  if (explicit) return explicit
+  const credentials = account.credentials as Record<string, unknown> | undefined
+  const baseUrl = typeof credentials?.base_url === 'string' ? credentials.base_url.toLowerCase() : ''
+  if (baseUrl.includes('api.kimi.com/coding')) return 'kimi'
+  if (baseUrl.includes('open.bigmodel.cn') || baseUrl.includes('bigmodel.cn') || baseUrl.includes('api.z.ai')) return 'zhipu'
+  if (baseUrl.includes('api.minimaxi.com') || baseUrl.includes('api.minimax.io')) return 'minimax'
+  if (baseUrl.includes('volces.com') || baseUrl.includes('volcengine') || baseUrl.includes('ark.cn-beijing.volces.com') || baseUrl.includes('ark.volces.com')) return 'volcengine'
+  if (baseUrl.includes('mimo') || baseUrl.includes('mi.com') || baseUrl.includes('xiaomi')) return 'mimo'
+  return ''
+}
+
+const codingPlanProviderLabels: Record<string, string> = {
+  kimi: 'Kimi',
+  zhipu: 'GLM',
+  minimax: 'MiniMax',
+  volcengine: 'Volcengine',
+  mimo: 'MiMo'
+}
+
+const codingPlanProvider = computed(() => detectCodingPlanProviderFromAccount(props.account))
+const isCodingPlanAccount = computed(() => isDomesticCodingPlanPlatform(props.account.platform) || (props.account.platform === 'openai' && props.account.type === 'apikey' && !!codingPlanProvider.value))
+const codingPlanProviderLabel = computed(() => codingPlanProviderLabels[codingPlanProvider.value] || codingPlanProvider.value)
+const codingPlanProbeStatusLabel = computed(() => {
+  const extra = props.account.extra as Record<string, unknown> | undefined
+  const status = typeof extra?.coding_plan_probe_status === 'string' ? extra.coding_plan_probe_status : ''
+  if (status === 'unsupported') return t('admin.accounts.codingPlan.probeUnsupported')
+  if (status === 'experimental') return t('admin.accounts.codingPlan.probeExperimental')
+  if (status === 'supported') return t('admin.accounts.codingPlan.probeSupported')
+  if (codingPlanProvider.value === 'volcengine') return t('admin.accounts.codingPlan.probeSupported')
+  if (codingPlanProvider.value === 'mimo') return t('admin.accounts.codingPlan.probeExperimental')
+  return t('admin.accounts.codingPlan.probeStatusAuto')
 })
 
 const showGeminiTodayStats = computed(() => {
@@ -595,7 +669,8 @@ const geminiUsageAvailable = computed(() => {
 })
 
 const hasOpenAIUsageFallback = computed(() => {
-  if (props.account.platform !== 'openai' || props.account.type !== 'oauth') return false
+  if (props.account.platform !== 'openai' && !isDomesticCodingPlanPlatform(props.account.platform)) return false
+  if (props.account.type !== 'oauth' && !isCodingPlanAccount.value) return false
   return !!usageInfo.value?.five_hour || !!usageInfo.value?.seven_day
 })
 
@@ -1224,8 +1299,10 @@ onMounted(() => {
 
 watch(openAIUsageRefreshKey, (nextKey, prevKey) => {
   if (!prevKey || nextKey === prevKey) return
-  if (props.account.platform !== 'openai' || props.account.type !== 'oauth') return
+  if (props.account.platform !== 'openai' && !isDomesticCodingPlanPlatform(props.account.platform)) return
+  if (props.account.type !== 'oauth' && !isCodingPlanAccount.value) return
 
+  _usageCache.delete(props.account.id)
   requestAutoLoad()
 })
 

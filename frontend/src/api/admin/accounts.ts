@@ -19,8 +19,35 @@ import type {
   CodexSessionImportRequest,
   CodexSessionImportResult,
   CheckMixedChannelRequest,
-  CheckMixedChannelResponse
+  CheckMixedChannelResponse,
+  AccountPlatform
 } from '@/types'
+import { DOMESTIC_CODING_PLANS } from '@/types'
+
+function mapAccountResponse(acc: Account): Account {
+  if (
+    acc.platform === 'openai' &&
+    acc.extra?.coding_plan_provider &&
+    DOMESTIC_CODING_PLANS.includes(acc.extra.coding_plan_provider as AccountPlatform)
+  ) {
+    return { ...acc, platform: acc.extra.coding_plan_provider as AccountPlatform }
+  }
+  return acc
+}
+
+function mapAccountRequest<T extends { platform?: AccountPlatform; extra?: Record<string, any> }>(req: T): T {
+  if (req.platform && DOMESTIC_CODING_PLANS.includes(req.platform)) {
+    return {
+      ...req,
+      extra: {
+        ...(req.extra || {}),
+        coding_plan_provider: req.platform,
+        quota_source: 'coding_plan'
+      }
+    }
+  }
+  return req
+}
 
 /**
  * List all accounts with pagination
@@ -55,6 +82,9 @@ export async function list(
     },
     signal: options?.signal
   })
+  if (data?.items) {
+    data.items = data.items.map(mapAccountResponse)
+  }
   return data
 }
 
@@ -108,6 +138,10 @@ export async function listWithEtag(
     }
   }
 
+  if (response.data?.items) {
+    response.data.items = response.data.items.map(mapAccountResponse)
+  }
+
   return {
     notModified: false,
     etag: etagHeader,
@@ -122,7 +156,7 @@ export async function listWithEtag(
  */
 export async function getById(id: number): Promise<Account> {
   const { data } = await apiClient.get<Account>(`/admin/accounts/${id}`)
-  return data
+  return mapAccountResponse(data)
 }
 
 /**
@@ -131,8 +165,9 @@ export async function getById(id: number): Promise<Account> {
  * @returns Created account
  */
 export async function create(accountData: CreateAccountRequest): Promise<Account> {
-  const { data } = await apiClient.post<Account>('/admin/accounts', accountData)
-  return data
+  const mappedData = mapAccountRequest(accountData)
+  const { data } = await apiClient.post<Account>('/admin/accounts', mappedData)
+  return mapAccountResponse(data)
 }
 
 /**
@@ -142,8 +177,9 @@ export async function create(accountData: CreateAccountRequest): Promise<Account
  * @returns Updated account
  */
 export async function update(id: number, updates: UpdateAccountRequest): Promise<Account> {
-  const { data } = await apiClient.put<Account>(`/admin/accounts/${id}`, updates)
-  return data
+  const mappedUpdates = mapAccountRequest(updates)
+  const { data } = await apiClient.put<Account>(`/admin/accounts/${id}`, mappedUpdates)
+  return mapAccountResponse(data)
 }
 
 /**

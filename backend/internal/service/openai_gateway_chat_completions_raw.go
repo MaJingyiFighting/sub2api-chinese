@@ -220,6 +220,10 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 		return s.handleChatCompletionsErrorResponse(resp, c, account, billingModel)
 	}
 
+	if s.rateLimitService != nil {
+		s.rateLimitService.markCodingPlanRequestSuccess(ctx, account)
+	}
+
 	// 8. Forward response
 	if clientStream {
 		return s.streamRawChatCompletions(c, resp, account, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime, len(body))

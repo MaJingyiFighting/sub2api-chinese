@@ -71,8 +71,10 @@ type Account struct {
 type OpenAIEndpointCapability string
 
 const (
-	OpenAIEndpointCapabilityChatCompletions OpenAIEndpointCapability = "chat_completions"
-	OpenAIEndpointCapabilityEmbeddings      OpenAIEndpointCapability = "embeddings"
+	OpenAIEndpointCapabilityChatCompletions       OpenAIEndpointCapability = "chat_completions"
+	OpenAIEndpointCapabilityEmbeddings            OpenAIEndpointCapability = "embeddings"
+	OpenAIEndpointCapabilityResponses             OpenAIEndpointCapability = "responses"
+	OpenAIEndpointCapabilityCodexResponsesViaChat OpenAIEndpointCapability = "codex_responses_via_chat"
 )
 
 const openAIEndpointCapabilitiesCredentialKey = "openai_capabilities"
@@ -734,6 +736,9 @@ func (a *Account) GetBaseURL() string {
 	if a.Type != AccountTypeAPIKey {
 		return ""
 	}
+	if anthropicBaseURL := strings.TrimSpace(a.GetCredential("anthropic_base_url")); anthropicBaseURL != "" {
+		return anthropicBaseURL
+	}
 	baseURL := a.GetCredential("base_url")
 	if baseURL == "" {
 		return "https://api.anthropic.com"
@@ -742,6 +747,14 @@ func (a *Account) GetBaseURL() string {
 		return strings.TrimRight(baseURL, "/") + "/antigravity"
 	}
 	return baseURL
+}
+
+func (a *Account) GetAnthropicAPIKeyAuthMode() string {
+	mode := strings.ToLower(strings.TrimSpace(a.GetCredential("anthropic_auth_mode")))
+	if mode == "bearer" || mode == "authorization_bearer" {
+		return "bearer"
+	}
+	return "x-api-key"
 }
 
 // GetGeminiBaseURL 返回 Gemini 兼容端点的 base URL。
@@ -1065,7 +1078,7 @@ func (a *Account) IsOpenAIApiKey() bool {
 }
 
 func (a *Account) GetOpenAIBaseURL() string {
-	if !a.IsOpenAI() {
+	if !a.IsOpenAI() && !AccountSupportsNativeChatCompletions(a) {
 		return ""
 	}
 	if a.Type == AccountTypeAPIKey {
@@ -1099,7 +1112,7 @@ func (a *Account) GetOpenAIIDToken() string {
 }
 
 func (a *Account) GetOpenAIApiKey() string {
-	if !a.IsOpenAIApiKey() {
+	if a.Type != AccountTypeAPIKey || (!a.IsOpenAI() && !AccountSupportsNativeChatCompletions(a)) {
 		return ""
 	}
 	return a.GetCredential("api_key")
@@ -1140,13 +1153,20 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 	if capability == "" {
 		return true
 	}
-	if !a.IsOpenAI() {
+	isDomestic := IsCodingPlanAccount(a)
+	isOpenAICompatibleKey := a.Platform == PlatformDeepSeek || a.Platform == PlatformCustomOpenAICompatible
+	if !a.IsOpenAI() && !isDomestic && !isOpenAICompatibleKey {
 		return false
 	}
 	switch capability {
-	case OpenAIEndpointCapabilityChatCompletions:
+	case OpenAIEndpointCapabilityChatCompletions, OpenAIEndpointCapabilityResponses:
 	case OpenAIEndpointCapabilityEmbeddings:
-		if a.Type != AccountTypeAPIKey {
+		if !a.IsOpenAI() || a.Type != AccountTypeAPIKey {
+			return false
+		}
+	case OpenAIEndpointCapabilityCodexResponsesViaChat:
+		// Requires an API key account, doesn't work for OAuth as OAuth is directly Codex
+		if a.Type != AccountTypeAPIKey || (!a.IsOpenAI() && !isDomestic && !isOpenAICompatibleKey) {
 			return false
 		}
 	default:
@@ -1208,12 +1228,13 @@ func (a *Account) openAIEndpointCapabilitySet() (map[string]bool, bool) {
 }
 
 func (a *Account) SupportsOpenAIImageCapability(capability OpenAIImagesCapability) bool {
-	if !a.IsOpenAI() {
+	isDomestic := IsCodingPlanAccount(a)
+	if !a.IsOpenAI() && !isDomestic {
 		return false
 	}
 	switch capability {
 	case OpenAIImagesCapabilityBasic, OpenAIImagesCapabilityNative:
-		return a.Type == AccountTypeOAuth || a.Type == AccountTypeAPIKey
+		return a.Type == AccountTypeOAuth || (a.Type == AccountTypeAPIKey && a.IsOpenAI())
 	default:
 		return true
 	}
@@ -1474,7 +1495,13 @@ func (a *Account) IsOpenAIOAuthPassthroughEnabled() bool {
 // 字段：accounts.extra.anthropic_passthrough。
 // 字段缺失或类型不正确时，按 false（关闭）处理。
 func (a *Account) IsAnthropicAPIKeyPassthroughEnabled() bool {
-	if a == nil || a.Platform != PlatformAnthropic || a.Type != AccountTypeAPIKey || a.Extra == nil {
+	if a == nil || a.Type != AccountTypeAPIKey {
+		return false
+	}
+	if AccountSupportsNativeAnthropicMessages(a) && a.Platform != PlatformAnthropic {
+		return true
+	}
+	if a.Platform != PlatformAnthropic || a.Extra == nil {
 		return false
 	}
 	enabled, ok := a.Extra["anthropic_passthrough"].(bool)

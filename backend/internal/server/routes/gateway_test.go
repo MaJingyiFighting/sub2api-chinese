@@ -15,6 +15,10 @@ import (
 )
 
 func newGatewayRoutesTestRouter() *gin.Engine {
+	return newGatewayRoutesTestRouterForPlatform(service.PlatformOpenAI)
+}
+
+func newGatewayRoutesTestRouterForPlatform(platform string) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 
@@ -28,7 +32,7 @@ func newGatewayRoutesTestRouter() *gin.Engine {
 			groupID := int64(1)
 			c.Set(string(servermiddleware.ContextKeyAPIKey), &service.APIKey{
 				GroupID: &groupID,
-				Group:   &service.Group{Platform: service.PlatformOpenAI},
+				Group:   &service.Group{Platform: platform},
 			})
 			c.Next()
 		}),
@@ -40,6 +44,17 @@ func newGatewayRoutesTestRouter() *gin.Engine {
 	)
 
 	return router
+}
+
+func TestGatewayRoutesDomesticResponsesRequiresSidecar(t *testing.T) {
+	router := newGatewayRoutesTestRouterForPlatform(service.PlatformDomestic)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"MiniMax-M3","input":"hello"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusNotImplemented, w.Code)
+	require.Contains(t, w.Body.String(), "codex-router")
 }
 
 func TestGatewayRoutesOpenAIResponsesCompactPathIsRegistered(t *testing.T) {

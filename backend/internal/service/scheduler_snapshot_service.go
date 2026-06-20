@@ -678,6 +678,9 @@ func (s *SchedulerSnapshotService) loadAccountsFromDB(ctx context.Context, bucke
 
 	if useMixed {
 		platforms := []string{bucket.Platform, PlatformAntigravity}
+		if bucket.Platform == PlatformAnthropic {
+			platforms = AnthropicCompatibleSchedulingPlatforms()
+		}
 		var accounts []Account
 		var err error
 		if groupID > 0 {
@@ -698,6 +701,17 @@ func (s *SchedulerSnapshotService) loadAccountsFromDB(ctx context.Context, bucke
 			filtered = append(filtered, acc)
 		}
 		return filtered, nil
+	}
+
+	if bucket.Platform == PlatformDomestic {
+		platforms := DomesticSchedulingPlatforms()
+		if groupID > 0 {
+			return s.accountRepo.ListSchedulableByGroupIDAndPlatforms(ctx, groupID, platforms)
+		}
+		if s.isRunModeSimple() {
+			return s.accountRepo.ListSchedulableByPlatforms(ctx, platforms)
+		}
+		return s.accountRepo.ListSchedulableUngroupedByPlatforms(ctx, platforms)
 	}
 
 	if groupID > 0 {
